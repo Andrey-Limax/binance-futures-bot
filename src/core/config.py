@@ -199,7 +199,7 @@ class ConfigManager:
                 symbols.append(
                     TradingSymbolConfig(
                         symbol=entry,
-                        leverage=self._settings.default_leverage,
+                        default_leverage=self._settings.default_leverage,
                     )
                 )
         return symbols

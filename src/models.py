@@ -123,6 +123,11 @@ class AppConfig(BaseModel):
     sentiment: SentimentConfig = Field(default_factory=SentimentConfig)
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
 
+    # Leverage
+    default_leverage: int = Field(default=6, ge=1, le=20)
+    max_leverage: int = Field(default=12, ge=1, le=20)
+    min_leverage: int = Field(default=6, ge=1, le=20)
+
     # App
     environment: str = Field(default="production")
     log_level: str = Field(default="INFO")
@@ -252,12 +257,38 @@ class Position:
 
     def to_dict(self) -> dict:
         """Serialize to dict for JSON/TinyDB persistence."""
-        pass
+        return {
+            "symbol": self.symbol,
+            "side": self.side.value,
+            "entry_price": self.entry_price,
+            "amount": self.amount,
+            "leverage": self.leverage,
+            "stop_loss": self.stop_loss,
+            "trailing_stop": self.trailing_stop,
+            "take_profit": self.take_profit,
+            "unrealized_pnl": self.unrealized_pnl,
+            "realized_pnl": self.realized_pnl,
+            "opened_at": self.opened_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> Position:
         """Deserialize from dict."""
-        pass
+        return cls(
+            symbol=data["symbol"],
+            side=PositionSide(data["side"]),
+            entry_price=data["entry_price"],
+            amount=data["amount"],
+            leverage=data["leverage"],
+            stop_loss=data["stop_loss"],
+            trailing_stop=data["trailing_stop"],
+            take_profit=data["take_profit"],
+            unrealized_pnl=data["unrealized_pnl"],
+            realized_pnl=data["realized_pnl"],
+            opened_at=datetime.fromisoformat(data["opened_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"]),
+        )
 
 
 # ─── Risk Models ──────────────────────────────────────────────────────────────

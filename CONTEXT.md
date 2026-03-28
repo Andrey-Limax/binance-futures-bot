@@ -1,8 +1,8 @@
 # CONTEXT.md — MEXC Futures Bot
 
 ## Status Geral
-**Fase atual:** Esqueleto de classes completo
-**Última atualização:** 2025-03-27
+**Fase atual:** Correções de bugs concluídas
+**Última atualização:** 2026-03-28
 
 ---
 
@@ -24,6 +24,13 @@
 - [x] ARCHITECTURE.md — diagramas ASCII do fluxo de dados
 - [x] .gitignore — exclusões Python/IDE/data/.env
 - [x] README.md — documentação do projeto
+- [x] Fixes de bugs (2026-03-28):
+  - [x] models.py — AppConfig: adicionados default_leverage, max_leverage, min_leverage
+  - [x] models.py — Position.to_dict() e from_dict() implementados (estavam com pass)
+  - [x] config.py — _parse_trading_symbols(): leverage= corrigido para default_leverage=
+  - [x] sentiment.py — _classify_score(): adicionada label "neutral" (score 45-55)
+  - [x] position.py — update_daily_pnl(): lógica de consecutive_losses simplificada
+  - [x] exchange.py — __init__: lê TESTNET do env para sandbox mode
 
 ## Decisões Técnicas Tomadas
 - Stack: Python 3.11+, asyncio, ccxt.pro, pandas-ta-classic (fork), Pydantic v2

@@ -170,8 +170,10 @@ class SentimentAnalyzer:
         """
         if score <= self.config.extreme_fear_threshold:
             return "extreme_fear"
-        if score < 50:
+        if score < 45:
             return "fear"
+        if score <= 55:
+            return "neutral"
         if score < self.config.extreme_greed_threshold:
             return "greed"
         return "extreme_greed"

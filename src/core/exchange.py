@@ -7,6 +7,7 @@ order execution with retry logic, and asset precision handling.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, AsyncGenerator, Optional
@@ -62,7 +63,7 @@ class ExchangeInterface:
         self.exchange: Optional[ccxt.mexc] = None
         self._api_key = api_key
         self._api_secret = api_secret
-        self._sandbox = sandbox
+        self._sandbox = sandbox or os.getenv("TESTNET", "false").lower() == "true"
 
     async def connect(self) -> None:
         """Establish connection to MEXC Futures and load markets.

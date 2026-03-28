@@ -235,7 +235,7 @@ class PositionTracker:
             trades_count = 1 if is_winner is not None else 0
             winning_trades = 1 if is_winner is True else 0
             losing_trades = 1 if is_winner is False else 0
-            consecutive_losses = 0 if is_winner is not False else (1 if is_winner is not None else 0)
+            consecutive_losses = 1 if is_winner is False else 0
 
             snapshot = DailyPnLSnapshot(
                 date=today,
