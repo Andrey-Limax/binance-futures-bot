@@ -24,6 +24,8 @@
 - [x] ARCHITECTURE.md — diagramas ASCII do fluxo de dados
 - [x] .gitignore — exclusões Python/IDE/data/.env
 - [x] README.md — documentação do projeto
+- [x] Fixes de bugs (2026-03-29):
+  - [x] exchange.py — Validadas correções de assinatura (dry_run em ordens/alavancagem, remoção de sandbox_mode e ajustes em disconnect)
 - [x] Fixes de bugs (2026-03-28):
   - [x] models.py — AppConfig: adicionados default_leverage, max_leverage, min_leverage
   - [x] models.py — Position.to_dict() e from_dict() implementados (estavam com pass)
