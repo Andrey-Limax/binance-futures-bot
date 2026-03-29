@@ -103,53 +103,55 @@ class TradingBot:
             environment=self.config.environment,
         )
 
-        # 1. Connect to exchange
-        await self.exchange.connect()
+        try:
+            # 1. Connect to exchange
+            await self.exchange.connect()
 
-        # 2. Load precision for all enabled symbols
-        enabled_symbols = [
-            s for s in self.config.trading_symbols if s.enabled
-        ]
-        for sym_cfg in enabled_symbols:
-            await self.exchange.load_precision(sym_cfg.symbol)
+            # 2. Load precision for all enabled symbols
+            enabled_symbols = [
+                s for s in self.config.trading_symbols if s.enabled
+            ]
+            for sym_cfg in enabled_symbols:
+                await self.exchange.load_precision(sym_cfg.symbol)
 
-        # 3. Restore open positions from persistence
-        self.tracker.open()
-        restored = self.tracker.get_all_positions()
-        if restored:
-            self._logger.info(
-                "positions_restored",
-                count=len(restored),
-                symbols=[p.symbol for p in restored],
-            )
-
-        # 4. Warm-up strategy indicators with historical candles
-        warmup_candles = self.config.strategy.warmup_candles
-        for sym_cfg in enabled_symbols:
-            candles = await self.exchange.fetch_ohlcv(
-                sym_cfg.symbol,
-                timeframe="1m",
-                limit=warmup_candles,
-            )
-            ok = await self.strategy.warm_up(sym_cfg.symbol, candles)
-            if not ok:
-                self._logger.warning(
-                    "warmup_failed",
-                    symbol=sym_cfg.symbol,
-                    candles_fetched=len(candles),
+            # 3. Restore open positions from persistence
+            self.tracker.open()
+            restored = self.tracker.get_all_positions()
+            if restored:
+                self._logger.info(
+                    "positions_restored",
+                    count=len(restored),
+                    symbols=[p.symbol for p in restored],
                 )
 
-        # 5. Register signal handlers and enter main loop
-        self._setup_signal_handlers()
-        self._running = True
-        self._logger.info("bot_started", symbol_count=len(enabled_symbols))
+            # 4. Warm-up strategy indicators with historical candles
+            warmup_candles = self.config.strategy.warmup_candles
+            for sym_cfg in enabled_symbols:
+                candles = await self.exchange.fetch_ohlcv(
+                    sym_cfg.symbol,
+                    timeframe="1m",
+                    limit=warmup_candles,
+                )
+                ok = await self.strategy.warm_up(sym_cfg.symbol, candles)
+                if not ok:
+                    self._logger.warning(
+                        "warmup_failed",
+                        symbol=sym_cfg.symbol,
+                        candles_fetched=len(candles),
+                    )
 
-        try:
+            # 5. Register signal handlers and enter main loop
+            self._setup_signal_handlers()
+            self._running = True
+            self._logger.info("bot_started", symbol_count=len(enabled_symbols))
+
             await self._main_loop()
+
         except asyncio.CancelledError:
-            self._logger.info("main_loop_cancelled")
+            self._logger.info("bot_shutdown_requested")
         except Exception:
-            self._logger.exception("main_loop_unhandled_error")
+            self._logger.exception("bot_fatal_error")
+            raise
         finally:
             await self.shutdown()
 

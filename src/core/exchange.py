@@ -83,29 +83,36 @@ class ExchangeInterface:
                 pass
             self.exchange = None
 
-        self.exchange = ccxt.mexc(
-            {
-                "apiKey": self._api_key,
-                "secret": self._api_secret,
-                "options": {
-                    "defaultType": "swap",
-                },
-            }
-        )
-
-        if self._sandbox:
-            self._logger.warning(
-                "testnet_not_supported",
-                message="MEXC does not support testnet via API. Running in LIVE mode with real funds. Use small amounts for testing.",
+        try:
+            self.exchange = ccxt.mexc(
+                {
+                    "apiKey": self._api_key,
+                    "secret": self._api_secret,
+                    "options": {
+                        "defaultType": "swap",
+                    },
+                }
             )
 
-        await self.exchange.load_markets()
-        self._ws_running = True
-        self._logger.info(
-            "exchange_connected",
-            sandbox=self._sandbox,
-            markets=len(self.exchange.markets),
-        )
+            if self._sandbox:
+                self._logger.warning(
+                    "testnet_not_supported",
+                    message="MEXC does not support testnet via API. Running in LIVE mode with real funds. Use small amounts for testing.",
+                )
+
+            await self.exchange.load_markets()
+            self._ws_running = True
+            self._logger.info(
+                "exchange_connected",
+                sandbox=self._sandbox,
+                markets=len(self.exchange.markets),
+            )
+        except Exception as exc:
+            self._logger.error("exchange_connection_failed", error=str(exc))
+            if self.exchange is not None:
+                await self.exchange.close()
+                self.exchange = None
+            raise
 
     async def disconnect(self) -> None:
         """Gracefully close all connections.
