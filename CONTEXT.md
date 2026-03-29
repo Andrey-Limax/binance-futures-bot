@@ -2,7 +2,7 @@
 
 ## Status Geral
 **Fase atual:** DRY_RUN mode implementado
-**Última atualização:** 2026-03-28
+**Última atualização:** 2026-03-28 (fix disconnect)
 
 ---
 
@@ -32,6 +32,8 @@
   - [x] position.py — update_daily_pnl(): lógica de consecutive_losses simplificada
   - [x] exchange.py — __init__: lê TESTNET do env para sandbox mode
   - [x] exchange.py — connect(): removido set_sandbox_mode() (MEXC não suporta sandbox via ccxt); TESTNET flag agora loga warning ao invés de quebrar
+  - [x] exchange.py — disconnect(): fix unclosed connector (try/except/finally + always set exchange=None)
+  - [x] exchange.py — connect(): fecha instância anterior de exchange antes de criar nova (evita aiohttp connector leak)
 - [x] DRY_RUN mode:
   - [x] .env.example — DRY_RUN=true adicionado
   - [x] models.py — AppConfig.dry_run: bool = True

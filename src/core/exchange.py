@@ -75,6 +75,14 @@ class ExchangeInterface:
             ccxt.NetworkError: If connection to MEXC fails.
             ccxt.ExchangeError: If markets cannot be loaded.
         """
+        # Close previous exchange instance if reconnecting
+        if self.exchange is not None:
+            try:
+                await self.exchange.close()
+            except Exception:
+                pass
+            self.exchange = None
+
         self.exchange = ccxt.mexc(
             {
                 "apiKey": self._api_key,
@@ -108,10 +116,16 @@ class ExchangeInterface:
         self._ws_running = False
 
         if self.exchange is not None:
-            await self.exchange.close()
-            self._logger.info("exchange_disconnected")
-
-        self.exchange = None
+            try:
+                await self.exchange.close()
+                self._logger.info("exchange_disconnected")
+            except Exception as exc:
+                self._logger.warning(
+                    "disconnect_error",
+                    error=str(exc),
+                )
+            finally:
+                self.exchange = None
 
     # ── Market Data ────────────────────────────────────────────────────────
 
