@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     circuit_breaker_max_consecutive_losses: int = Field(default=3, ge=1)
     circuit_breaker_cooldown_minutes: int = Field(default=30, ge=1)
 
+    # ── Dry Run ──────────────────────────────────────────────────────────
+    dry_run: bool = Field(default=True, description="Simulate orders without executing")
+
     # ── Application ───────────────────────────────────────────────────────
     environment: str = Field(default="production")
     log_level: str = Field(default="INFO")
@@ -178,6 +181,7 @@ class ConfigManager:
                 max_consecutive_losses=s.circuit_breaker_max_consecutive_losses,
                 cooldown_minutes=s.circuit_breaker_cooldown_minutes,
             ),
+            dry_run=s.dry_run,
             environment=s.environment,
             log_level=s.log_level,
             log_format=s.log_format,
@@ -249,6 +253,7 @@ class ConfigManager:
             "warmup_candles": s.warmup_candles,
             "circuit_breaker_max_consecutive_losses": s.circuit_breaker_max_consecutive_losses,
             "circuit_breaker_cooldown_minutes": s.circuit_breaker_cooldown_minutes,
+            "dry_run": s.dry_run,
             "environment": s.environment,
             "log_level": s.log_level,
             "log_format": s.log_format,

@@ -67,6 +67,12 @@ class TradingBot:
         self._logger = logger.bind(component="TradingBot")
         self._running: bool = False
         self._tasks: list[asyncio.Task] = []
+        self.dry_run = config.dry_run
+
+        if self.dry_run:
+            self._logger.warning(
+                "DRY_RUN mode enabled — no real orders will be placed"
+            )
 
         # Initialize components
         self.exchange = ExchangeInterface(
@@ -437,7 +443,7 @@ class TradingBot:
                            min(leverage, self.config.max_leverage))
 
             # 3. Set leverage on exchange
-            await self.exchange.set_leverage(symbol, leverage)
+            await self.exchange.set_leverage(symbol, leverage, dry_run=self.dry_run)
 
             # 4. Calculate position size
             balance_data = await self.exchange.fetch_balance()
@@ -471,7 +477,7 @@ class TradingBot:
                 leverage=leverage,
             )
 
-            result = await self.exchange.safe_order_execution(order)
+            result = await self.exchange.safe_order_execution(order, dry_run=self.dry_run)
 
             # 6. Calculate initial trailing stop
             trailing_stop = self.risk.calculate_trailing_stop(
@@ -642,7 +648,7 @@ class TradingBot:
                 reduce_only=True,
             )
 
-            result = await self.exchange.safe_order_execution(order)
+            result = await self.exchange.safe_order_execution(order, dry_run=self.dry_run)
 
             # Determine if trade was winner
             is_winner = position.unrealized_pnl >= 0

@@ -128,6 +128,9 @@ class AppConfig(BaseModel):
     max_leverage: int = Field(default=12, ge=1, le=20)
     min_leverage: int = Field(default=6, ge=1, le=20)
 
+    # Dry Run
+    dry_run: bool = Field(default=True)
+
     # App
     environment: str = Field(default="production")
     log_level: str = Field(default="INFO")

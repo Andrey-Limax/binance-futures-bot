@@ -86,7 +86,10 @@ class ExchangeInterface:
         )
 
         if self._sandbox:
-            self.exchange.set_sandbox_mode(True)
+            self._logger.warning(
+                "testnet_not_supported",
+                message="MEXC does not support testnet via API. Running in LIVE mode with real funds. Use small amounts for testing.",
+            )
 
         await self.exchange.load_markets()
         self._ws_running = True
@@ -287,6 +290,7 @@ class ExchangeInterface:
     async def safe_order_execution(
         self,
         request: OrderRequest,
+        dry_run: bool = False,
     ) -> OrderResult:
         """Execute an order with error-specific retry logic.
 
@@ -299,6 +303,7 @@ class ExchangeInterface:
 
         Args:
             request: Validated OrderRequest with symbol, side, amount, etc.
+            dry_run: If True, simulate the order without executing on exchange.
 
         Returns:
             OrderResult with execution details.
@@ -307,6 +312,32 @@ class ExchangeInterface:
             ExchangeExecutionError: For non-retryable exchange errors.
             MaxRetriesExceededError: After exhausting network retries.
         """
+        if dry_run:
+            self._logger.info(
+                "dry_run_order_skipped",
+                symbol=request.symbol,
+                side=request.side.value,
+                amount=request.amount,
+                leverage=request.leverage,
+                stop_loss=request.stop_loss,
+                take_profit=request.take_profit,
+            )
+            return OrderResult(
+                order_id=f"DRY_RUN_{datetime.now(timezone.utc).timestamp()}",
+                client_order_id=None,
+                symbol=request.symbol,
+                side=request.side,
+                order_type=request.order_type,
+                status=OrderStatus.CLOSED,
+                amount=request.amount,
+                filled=request.amount,
+                remaining=0.0,
+                price=request.price,
+                average_fill_price=request.price,
+                fee=0.0,
+                timestamp=datetime.now(timezone.utc),
+            )
+
         if self.exchange is None:
             raise RuntimeError("Exchange not connected. Call connect() first.")
 
@@ -527,13 +558,22 @@ class ExchangeInterface:
 
         return active_positions
 
-    async def set_leverage(self, symbol: str, leverage: int) -> None:
+    async def set_leverage(self, symbol: str, leverage: int, dry_run: bool = False) -> None:
         """Set leverage for a symbol.
 
         Args:
             symbol: Trading symbol.
             leverage: Leverage multiplier (1-125).
+            dry_run: If True, skip the actual API call.
         """
+        if dry_run:
+            self._logger.info(
+                "dry_run_leverage_skipped",
+                symbol=symbol,
+                leverage=leverage,
+            )
+            return
+
         if self.exchange is None:
             raise RuntimeError("Exchange not connected. Call connect() first.")
 

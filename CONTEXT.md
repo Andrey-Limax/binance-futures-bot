@@ -1,7 +1,7 @@
 # CONTEXT.md — MEXC Futures Bot
 
 ## Status Geral
-**Fase atual:** Correções de bugs concluídas
+**Fase atual:** DRY_RUN mode implementado
 **Última atualização:** 2026-03-28
 
 ---
@@ -31,6 +31,13 @@
   - [x] sentiment.py — _classify_score(): adicionada label "neutral" (score 45-55)
   - [x] position.py — update_daily_pnl(): lógica de consecutive_losses simplificada
   - [x] exchange.py — __init__: lê TESTNET do env para sandbox mode
+  - [x] exchange.py — connect(): removido set_sandbox_mode() (MEXC não suporta sandbox via ccxt); TESTNET flag agora loga warning ao invés de quebrar
+- [x] DRY_RUN mode:
+  - [x] .env.example — DRY_RUN=true adicionado
+  - [x] models.py — AppConfig.dry_run: bool = True
+  - [x] config.py — Settings.dry_run + to_app_config() + get_masked_config()
+  - [x] exchange.py — safe_order_execution(dry_run) + set_leverage(dry_run): simula ordens com OrderResult sintético
+  - [x] bot.py — self.dry_run armazenado, passado para set_leverage e safe_order_execution
 
 ## Decisões Técnicas Tomadas
 - Stack: Python 3.11+, asyncio, ccxt.pro, pandas-ta-classic (fork), Pydantic v2
@@ -41,6 +48,7 @@
 - Signal composite: 3 indicadores votam, 3/3 = STRONG, 2/3 = BUY/SELL, else NEUTRAL
 - Confiança mínima para entrada: 0.67 (2/3 indicadores concordam)
 - TinyDB para persistência leve (sem necessidade de banco externo)
+- DRY_RUN=true por padrão — bot conecta na MEXC e recebe preços reais, gera sinais, loga decisões, mas NÃO coloca ordens reais
 
 ## Arquitetura
 ```
@@ -62,7 +70,7 @@ src/
 ```
 
 ## Contexto Pendente / Próximos Passos
-- [ ] Testar na MEXC Testnet (verificar conectividade WebSocket)
+- [ ] Testar na MEXC (verificar conectividade WebSocket — sem testnet, usar pequenas quantias)
 - [ ] Implementar testes unitários (tests/)
 - [ ] Configurar CI/CD no Docker
 - [ ] Adicionar métricas de performance (win rate, sharpe ratio)
@@ -74,3 +82,4 @@ src/
 - Trailing stop é manual, não ordem nativa da MEXC
 - Warm-up obrigatório: 100 velas antes de operar
 - pandas-ta-classic (fork) usado em vez de pandas-ta original (compatibilidade Python 3.11)
+- MEXC não suporta testnet/sandbox via ccxt — flag TESTNET é ignorado com warning, bot roda em LIVE
