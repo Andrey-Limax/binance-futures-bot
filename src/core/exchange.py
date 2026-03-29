@@ -48,14 +48,16 @@ class ExchangeInterface:
         self,
         api_key: str,
         api_secret: str,
-        sandbox: bool = False,
     ) -> None:
         """Initialize the exchange interface.
 
         Args:
             api_key: MEXC API key.
             api_secret: MEXC API secret.
-            sandbox: If True, use MEXC testnet.
+
+        Note:
+            MEXC does not support testnet/sandbox via ccxt.
+            The bot always connects to the live exchange.
         """
         self._logger = logger.bind(component="ExchangeInterface")
         self._precision_cache: dict[str, AssetPrecision] = {}
@@ -63,7 +65,6 @@ class ExchangeInterface:
         self.exchange: Optional[ccxt.mexc] = None
         self._api_key = api_key
         self._api_secret = api_secret
-        self._sandbox = sandbox or os.getenv("TESTNET", "false").lower() == "true"
 
     async def connect(self) -> None:
         """Establish connection to MEXC Futures and load markets.
@@ -94,17 +95,10 @@ class ExchangeInterface:
                 }
             )
 
-            if self._sandbox:
-                self._logger.warning(
-                    "testnet_not_supported",
-                    message="MEXC does not support testnet via API. Running in LIVE mode with real funds. Use small amounts for testing.",
-                )
-
             await self.exchange.load_markets()
             self._ws_running = True
             self._logger.info(
                 "exchange_connected",
-                sandbox=self._sandbox,
                 markets=len(self.exchange.markets),
             )
         except Exception as exc:
