@@ -169,9 +169,9 @@ class ExchangeInterface:
         else:
             lot_size = float(amount_prec)
 
-        limits = market.get("limits", {})
-        amount_limits = limits.get("amount", {})
-        cost_limits = limits.get("cost", {})
+        limits = market.get("limits") or {}
+        amount_limits = limits.get("amount") or {}
+        cost_limits = limits.get("cost") or {}
 
         asset_precision = AssetPrecision(
             symbol=symbol,
@@ -179,9 +179,9 @@ class ExchangeInterface:
             amount_precision=amount_prec if isinstance(amount_prec, int) else len(str(lot_size).split(".")[1]) if "." in str(lot_size) else 0,
             tick_size=tick_size,
             lot_size=lot_size,
-            min_amount=float(amount_limits.get("min", 0.0)),
-            max_amount=float(amount_limits.get("max", float("inf"))),
-            min_cost=float(cost_limits.get("min", 0.0)),
+            min_amount=float(amount_limits.get("min") if amount_limits.get("min") is not None else 0.0),
+            max_amount=float(amount_limits.get("max") if amount_limits.get("max") is not None else float("inf")),
+            min_cost=float(cost_limits.get("min") if cost_limits.get("min") is not None else 0.0),
         )
 
         self._precision_cache[symbol] = asset_precision
