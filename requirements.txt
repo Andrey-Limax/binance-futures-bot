@@ -17,7 +17,7 @@ pandas-ta-classic==0.4.47
 aiohttp==3.13.3
 
 # --- Configuration & Logging ---
-python-dotenv==1.12.2
+python-dotenv==1.0.1
 structlog==25.5.0
 
 # --- Lightweight Persistence ---
