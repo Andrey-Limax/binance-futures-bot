@@ -190,22 +190,35 @@ class TradingBot:
                 )
 
         # Log final position states
-        open_positions = self.tracker.get_all_positions()
-        for pos in open_positions:
-            self._logger.info(
-                "final_position_state",
-                symbol=pos.symbol,
-                side=pos.side.value,
-                entry_price=pos.entry_price,
-                amount=pos.amount,
-                unrealized_pnl=pos.unrealized_pnl,
-            )
+        open_positions = []
+        try:
+            open_positions = self.tracker.get_all_positions()
+            for pos in open_positions:
+                self._logger.info(
+                    "final_position_state",
+                    symbol=pos.symbol,
+                    side=pos.side.value,
+                    entry_price=pos.entry_price,
+                    amount=pos.amount,
+                    unrealized_pnl=pos.unrealized_pnl,
+                )
+        except RuntimeError:
+            # Em caso de falha precoce na inicialização, o db pode não estar aberto
+            pass
+        except Exception as exc:
+            self._logger.warning("failed_to_log_positions", error=str(exc))
 
         # Close tracker database
-        self.tracker.close()
+        try:
+            self.tracker.close()
+        except Exception:
+            pass
 
         # Disconnect from exchange
-        await self.exchange.disconnect()
+        try:
+            await self.exchange.disconnect()
+        except Exception as exc:
+            self._logger.error("failed_to_disconnect_exchange", error=str(exc))
 
         self._logger.info(
             "shutdown_complete",
