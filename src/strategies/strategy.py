@@ -446,11 +446,11 @@ class StrategyEngine:
         return Signal.NEUTRAL
 
     def _interpret_rsi(self, df: pd.DataFrame) -> Signal:
-        """Interpret RSI for overbought/oversold conditions.
+        """Interpret RSI for trend confirmation (Option A).
 
         Logic:
-            - RSI < oversold_threshold → BUY (oversold)
-            - RSI > overbought_threshold → SELL (overbought)
+            - 50 < RSI < overbought_threshold → BUY (bullish momentum confirmed)
+            - oversold_threshold < RSI < 50 → SELL (bearish momentum confirmed)
             - Otherwise → NEUTRAL
 
         Args:
@@ -466,10 +466,11 @@ class StrategyEngine:
         if pd.isna(rsi_val):
             return Signal.NEUTRAL
 
-        if rsi_val < self.config.rsi_oversold:
+        # Confirmação de tendência com limite para sobrecomprado/sobrevendido
+        if 50 < rsi_val < self.config.rsi_overbought:
             return Signal.BUY
 
-        if rsi_val > self.config.rsi_overbought:
+        if self.config.rsi_oversold < rsi_val < 50:
             return Signal.SELL
 
         return Signal.NEUTRAL
