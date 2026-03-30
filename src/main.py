@@ -70,6 +70,7 @@ async def main() -> int:
         # Mask sensitive values for logging
         masked = config_mgr.get_masked_config()
         log.info("config_loaded", environment=app_config.environment)
+        log.info("sentiment_enabled", enabled=app_config.sentiment.enabled)
 
         bot = TradingBot(app_config)
         await bot.start()

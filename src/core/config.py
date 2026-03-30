@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     sentiment_extreme_fear_threshold: int = Field(default=20, ge=0, le=100)
     sentiment_extreme_greed_threshold: int = Field(default=85, ge=0, le=100)
     sentiment_cache_ttl_seconds: int = Field(default=3600, ge=60)
-    sentiment_enabled: bool = Field(default=True)
+    sentiment_enabled: bool = Field(default=False)
 
     # ── Strategy ──────────────────────────────────────────────────────────
     ichimoku_tenkan: int = Field(default=9, ge=1)
