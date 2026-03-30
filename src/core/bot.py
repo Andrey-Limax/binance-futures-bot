@@ -312,8 +312,9 @@ class TradingBot:
                         await self._manage_position(symbol, ticker)
                     continue
 
-                # 3. Fetch sentiment (cached)
-                sentiment_result = await self.sentiment.get_sentiment()
+                # 3. Fetch sentiment only when enabled
+                if self.config.sentiment.enabled:
+                    sentiment_result = await self.sentiment.get_sentiment()
 
                 # 4. Update strategy with ticker data
                 from src.models import OHLCV
@@ -383,15 +384,16 @@ class TradingBot:
             return
 
         # 3. Sentiment check
-        sentiment_result = await self.sentiment.get_sentiment()
-        if sentiment_result.blocks_new_entries:
-            self._logger.info(
-                "signal_blocked_by_sentiment",
-                symbol=symbol,
-                sentiment_score=sentiment_result.score,
-                sentiment_label=sentiment_result.label,
-            )
-            return
+        if self.config.sentiment.enabled:
+            sentiment_result = await self.sentiment.get_sentiment()
+            if sentiment_result.blocks_new_entries:
+                self._logger.info(
+                    "signal_blocked_by_sentiment",
+                    symbol=symbol,
+                    sentiment_score=sentiment_result.score,
+                    sentiment_label=sentiment_result.label,
+                )
+                return
 
         # 4. Confidence threshold — require at least 0.67 (2/3 indicators agree)
         if signal.confidence < 0.67:
