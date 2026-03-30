@@ -62,9 +62,14 @@ class SentimentAnalyzer:
         Returns:
             SentimentResult with score, label, and blocking flags.
         """
+        if not self.config.enabled:
+            return self._build_fallback()
+
         if self.is_cache_valid():
-            self._logger.debug("Returning cached sentiment", score=self._cache.score)
-            return self._cache
+            cached = self._cache
+            assert cached is not None
+            self._logger.debug("Returning cached sentiment", score=cached.score)
+            return cached
 
         self._logger.info("Cache miss or expired, fetching fresh sentiment")
         result = await self.fetch_fear_greed_index()

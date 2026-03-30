@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     sentiment_extreme_fear_threshold: int = Field(default=20, ge=0, le=100)
     sentiment_extreme_greed_threshold: int = Field(default=85, ge=0, le=100)
     sentiment_cache_ttl_seconds: int = Field(default=3600, ge=60)
+    sentiment_enabled: bool = Field(default=True)
 
     # ── Strategy ──────────────────────────────────────────────────────────
     ichimoku_tenkan: int = Field(default=9, ge=1)
@@ -125,7 +126,7 @@ class ConfigManager:
                              or have invalid values.
         """
         env_path = str(env_file) if env_file else ".env"
-        settings = Settings(_env_file=env_path)
+        settings = Settings(_env_file=env_path)  # type: ignore[call-arg]
         instance = cls(settings)
         instance._logger.info(
             "Configuration loaded",
@@ -160,6 +161,7 @@ class ConfigManager:
                 risk_per_trade_pct=s.risk_per_trade_pct,
             ),
             sentiment=SentimentConfig(
+                enabled=s.sentiment_enabled,
                 extreme_fear_threshold=s.sentiment_extreme_fear_threshold,
                 extreme_greed_threshold=s.sentiment_extreme_greed_threshold,
                 cache_ttl_seconds=s.sentiment_cache_ttl_seconds,

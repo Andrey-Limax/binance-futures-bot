@@ -97,6 +97,7 @@ class StrategyConfig(BaseModel):
 
 class SentimentConfig(BaseModel):
     """Sentiment analysis configuration."""
+    enabled: bool = Field(default=True)
     extreme_fear_threshold: int = Field(default=20, ge=0, le=100)
     extreme_greed_threshold: int = Field(default=85, ge=0, le=100)
     cache_ttl_seconds: int = Field(default=3600, ge=60)
