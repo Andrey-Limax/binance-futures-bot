@@ -581,13 +581,20 @@ class ExchangeInterface:
 
         return active_positions
 
-    async def set_leverage(self, symbol: str, leverage: int, dry_run: bool = False) -> None:
-        """Set leverage for a symbol.
+    async def set_leverage(
+        self,
+        symbol: str,
+        leverage: int,
+        dry_run: bool = False,
+        position_side: str = "long",
+    ) -> None:
+        """Set leverage for a symbol on MEXC Futures.
 
         Args:
-            symbol: Trading symbol.
+            symbol: Trading symbol (CCXT unified, e.g. 'BTC/USDT:USDT').
             leverage: Leverage multiplier (1-125).
             dry_run: If True, skip the actual API call.
+            position_side: 'long' or 'short' — used to set positionType for MEXC.
         """
         if dry_run:
             self._logger.info(
@@ -600,11 +607,27 @@ class ExchangeInterface:
         if self.exchange is None:
             raise RuntimeError("Exchange not connected. Call connect() first.")
 
-        await self.exchange.set_leverage(leverage, symbol)
+        # MEXC Futures requires openType and positionType parameters.
+        # openType: 1 = isolated margin, 2 = cross margin
+        # positionType: 1 = long, 2 = short
+        position_type = 1 if position_side == "long" else 2
+        params = {
+            "openType": 1,          # isolated margin
+            "positionType": position_type,
+        }
+
+        # Use native market ID for MEXC (e.g., 'BTC_USDT' instead of 'BTC/USDT:USDT')
+        native_symbol = symbol
+        if self.exchange.id == "mexc":
+            market = self.exchange.market(symbol)
+            native_symbol = market.get("id", symbol)
+
+        await self.exchange.set_leverage(leverage, native_symbol, params=params)
         self._logger.info(
             "leverage_set",
             symbol=symbol,
             leverage=leverage,
+            position_side=position_side,
         )
 
     async def cancel_all_orders(self, symbol: str) -> list[dict]:

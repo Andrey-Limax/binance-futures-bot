@@ -493,8 +493,10 @@ class TradingBot:
             leverage = max(self.config.min_leverage,
                            min(leverage, self.config.max_leverage))
 
-            # 3. Set leverage on exchange
-            await self.exchange.set_leverage(symbol, leverage, dry_run=self.dry_run)
+            # 3. Set leverage on exchange (MEXC requires knowing the side)
+            await self.exchange.set_leverage(
+                symbol, leverage, dry_run=self.dry_run, position_side=position_side
+            )
 
             # 4. Calculate position size
             balance_data = await self.exchange.fetch_balance()
