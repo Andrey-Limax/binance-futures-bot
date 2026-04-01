@@ -121,30 +121,59 @@ class StrategyEngine:
         )
         return True
 
-    def update_candle(self, symbol: str, candle: OHLCV) -> None:
-        """Append a new candle to the in-memory cache.
+    def update_candle(self, symbol: str, candle: OHLCV, timeframe: str) -> None:
+        """Update the last candle or append a new one based on timeframe.
 
-        Maintains a rolling window of candles for indicator calculation.
-        Drops oldest candles when exceeding warmup_candles + buffer.
+        If the incoming candle belongs to the same time bucket as the last
+        cached candle, it updates the High, Low, Close, and Volume of that
+        candle. Otherwise, it appends a new candle bucket.
 
         Args:
             symbol: Trading symbol.
-            candle: New OHLCV candle to append.
+            candle: New OHLCV data point (ticker).
+            timeframe: CCXT timeframe string (e.g., '1m', '15m', '1h').
         """
         if symbol not in self._candle_cache:
             self._logger.warning("update_before_warmup", symbol=symbol)
             return
 
-        new_row = self._ohlcv_list_to_df([candle])
-        self._candle_cache[symbol] = pd.concat(
-            [self._candle_cache[symbol], new_row],
-            ignore_index=True,
-        )
+        df = self._candle_cache[symbol]
+        if df.empty:
+            return
 
-        # Keep a rolling window: warmup + 50 candle buffer
-        max_len = self.config.warmup_candles + 50
-        if len(self._candle_cache[symbol]) > max_len:
-            self._candle_cache[symbol] = self._candle_cache[symbol].iloc[-max_len:].reset_index(drop=True)
+        # Convert CCXT timeframe (1m, 1h) to pandas frequency (1min, 1H)
+        freq = timeframe.replace("m", "min").replace("h", "H").replace("d", "D")
+        
+        # Determine buckets
+        last_ts = pd.to_datetime(df["timestamp"].iloc[-1])
+        new_ts = pd.to_datetime(candle.timestamp)
+        
+        # Floor timestamps to the start of their timeframe bucket
+        last_bucket = last_ts.floor(freq)
+        new_bucket = new_ts.floor(freq)
+
+        if new_bucket == last_bucket:
+            # Update current candle (same bucket)
+            idx = df.index[-1]
+            df.at[idx, "high"] = max(df.at[idx, "high"], candle.high)
+            df.at[idx, "low"] = min(df.at[idx, "low"], candle.low)
+            df.at[idx, "close"] = candle.close
+            df.at[idx, "volume"] = df.at[idx, "volume"] + candle.volume # Simplified
+        else:
+            # Append new candle (new bucket)
+            new_row = self._ohlcv_list_to_df([candle])
+            # Ensure the new row's timestamp is floored to the bucket start
+            new_row.at[0, "timestamp"] = new_bucket
+            
+            self._candle_cache[symbol] = pd.concat(
+                [df, new_row],
+                ignore_index=True,
+            )
+
+            # Keep a rolling window: warmup + 50 candle buffer
+            max_len = self.config.warmup_candles + 50
+            if len(self._candle_cache[symbol]) > max_len:
+                self._candle_cache[symbol] = self._candle_cache[symbol].iloc[-max_len:].reset_index(drop=True)
 
     def generate_signal(self, symbol: str) -> StrategySignal:
         """Generate a composite trading signal for a symbol.

@@ -67,6 +67,7 @@ class TradingBot:
         self._logger = logger.bind(component="TradingBot")
         self._running: bool = False
         self._tasks: list[asyncio.Task] = []
+        self._ticker_counters: dict[str, int] = {}
         self.dry_run = config.dry_run
 
         if self.dry_run:
@@ -123,6 +124,28 @@ class TradingBot:
                     count=len(restored),
                     symbols=[p.symbol for p in restored],
                 )
+
+                # RECONCILIATION: Verify if restored positions exist on exchange
+                # (Only sync when in live mode to avoid clearing real positions if exchange is down)
+                if not self.dry_run:
+                    try:
+                        actual_positions = await self.exchange.fetch_positions()
+                        # CCXT unified symbols like 'BTC/USDT:USDT'
+                        actual_symbols = {p["symbol"] for p in actual_positions}
+                        
+                        for pos in restored:
+                            if pos.symbol not in actual_symbols:
+                                self._logger.warning(
+                                    "reconciliation_removing_ghost_position",
+                                    symbol=pos.symbol,
+                                    reason="Position not found on exchange (likely from a previous dry_run)",
+                                )
+                                self.tracker.remove_position(pos.symbol)
+                    except Exception as exc:
+                        self._logger.error(
+                            "reconciliation_failed",
+                            error=str(exc),
+                        )
 
             # 4. Warm-up strategy indicators with historical candles
             warmup_candles = self.config.strategy.warmup_candles
@@ -327,7 +350,17 @@ class TradingBot:
                     close=ticker.last,
                     volume=ticker.volume_24h,
                 )
-                self.strategy.update_candle(symbol, candle)
+                self.strategy.update_candle(symbol, candle, self.config.timeframe)
+
+                # Heartbeat: Log every 100 ticks to confirm active monitoring
+                self._ticker_counters[symbol] = self._ticker_counters.get(symbol, 0) + 1
+                if self._ticker_counters[symbol] % 100 == 0:
+                    self._logger.info(
+                        "monitoring_active",
+                        symbol=symbol,
+                        ticks_received=self._ticker_counters[symbol],
+                        last_price=ticker.last,
+                    )
 
                 # 5. Generate signal
                 signal = self.strategy.generate_signal(symbol)

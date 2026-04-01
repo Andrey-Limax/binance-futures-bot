@@ -376,9 +376,17 @@ class ExchangeInterface:
 
                 order_type = request.order_type.value
                 side = request.side.value
+                
+                # FIX for MEXC: CCXT's unified symbol 'BTC/USDT:USDT' can trigger
+                # a 'NotSupported' error for createSwapOrder.
+                # Using the native market ID 'BTC_USDT' bypasses this mapping issue.
+                symbol = request.symbol
+                if self.exchange and self.exchange.id == "mexc":
+                    market = self.exchange.market(request.symbol)
+                    symbol = market.get("id", request.symbol)
 
                 raw_order = await self.exchange.create_order(
-                    symbol=request.symbol,
+                    symbol=symbol,
                     type=order_type,
                     side=side,
                     amount=formatted_amount,
