@@ -239,6 +239,7 @@ class TradingBot:
                         amount=float(p.get("contracts", 0)),
                         leverage=int(p.get("leverage", 1)),
                         stop_loss=0.0,
+                        trailing_stop=0.0,
                         take_profit=0.0,
                         opened_at=datetime.utcnow(),
                         updated_at=datetime.utcnow()
