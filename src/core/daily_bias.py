@@ -122,7 +122,7 @@ class DailyBiasManager:
             )
             
             self._cache[symbol] = result
-            self._logger.debug(
+            self._logger.info(
                 "bias_calculated",
                 symbol=symbol,
                 direction=direction.value,
@@ -134,6 +134,10 @@ class DailyBiasManager:
             
         except Exception as e:
             self._logger.error("bias_calculation_failed", symbol=symbol, error=str(e))
+            # If we have a cached version, use it instead of returning neutral
+            if symbol in self._cache:
+                self._logger.info("using_cached_bias", symbol=symbol)
+                return self._cache[symbol]
             return self._get_neutral_bias()
 
     def _get_neutral_bias(self) -> DailyBiasResult:

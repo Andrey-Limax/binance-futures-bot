@@ -11,7 +11,7 @@ services:
       dockerfile: Dockerfile
       target: runtime
     container_name: mexc-trading-bot
-    restart: unless-stopped
+    restart: always
     env_file:
       - .env
     volumes:

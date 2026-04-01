@@ -67,16 +67,7 @@ class ExchangeInterface:
         self._api_secret = api_secret
 
     async def connect(self) -> None:
-        """Establish connection to MEXC Futures and load markets.
-
-        Initializes the ccxt.pro.mexc instance, sets required options
-        (defaultType='swap' for USDT-M futures), and loads market data.
-
-        Raises:
-            ccxt.NetworkError: If connection to MEXC fails.
-            ccxt.ExchangeError: If markets cannot be loaded.
-        """
-        # Close previous exchange instance if reconnecting
+        """Establish connection to MEXC Futures and load markets."""
         if self.exchange is not None:
             try:
                 await self.exchange.close()
@@ -95,12 +86,23 @@ class ExchangeInterface:
                 }
             )
 
-            await self.exchange.load_markets()
-            self._ws_running = True
-            self._logger.info(
-                "exchange_connected",
-                markets=len(self.exchange.markets),
-            )
+            # Load markets with retry for stability
+            max_retries = 5
+            for attempt in range(1, max_retries + 1):
+                try:
+                    await self.exchange.load_markets()
+                    self._ws_running = True
+                    self._logger.info(
+                        "exchange_connected",
+                        markets=len(self.exchange.markets),
+                    )
+                    return
+                except (ccxt.NetworkError, ccxt.RequestTimeout) as exc:
+                    if attempt == max_retries:
+                        self._logger.error("exchange_load_markets_failed_final", error=str(exc))
+                        raise
+                    self._logger.warning("exchange_load_markets_retry", attempt=attempt, error=str(exc))
+                    await asyncio.sleep(2**attempt)
         except Exception as exc:
             self._logger.error("exchange_connection_failed", error=str(exc))
             if self.exchange is not None:
@@ -109,24 +111,58 @@ class ExchangeInterface:
             raise
 
     async def disconnect(self) -> None:
-        """Gracefully close all connections.
-
-        Closes WebSocket streams and the REST API connection.
-        Should be called during shutdown to free resources.
-        """
+        """Gracefully close all connections."""
         self._ws_running = False
-
         if self.exchange is not None:
             try:
                 await self.exchange.close()
                 self._logger.info("exchange_disconnected")
             except Exception as exc:
-                self._logger.warning(
-                    "disconnect_error",
-                    error=str(exc),
-                )
+                self._logger.warning("disconnect_error", error=str(exc))
             finally:
                 self.exchange = None
+
+    def safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Safely convert value to float, handling None and invalid strings."""
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    async def fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "15m",
+        limit: int = 100,
+        max_retries: int = 3,
+    ) -> list[OHLCV]:
+        """Fetch historical candle data from the exchange with retry logic."""
+        if self.exchange is None:
+            raise RuntimeError("Exchange not connected.")
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                raw_candles = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                return [
+                    OHLCV(
+                        timestamp=datetime.fromtimestamp(c[0] / 1000, tz=timezone.utc),
+                        open=float(c[1]),
+                        high=float(c[2]),
+                        low=float(c[3]),
+                        close=float(c[4]),
+                        volume=float(c[5]),
+                    )
+                    for c in raw_candles
+                ]
+            except (ccxt.NetworkError, ccxt.ExchangeError) as exc:
+                last_error = exc
+                self._logger.warning("fetch_ohlcv_retry", symbol=symbol, attempt=attempt, error=str(exc))
+                await asyncio.sleep(2**attempt)
+
+        raise last_error
 
     # ── Market Data ────────────────────────────────────────────────────────
 
@@ -244,22 +280,9 @@ class ExchangeInterface:
         return candles
 
     async def watch_ticker(self, symbol: str) -> AsyncGenerator[Ticker, None]:
-        """Subscribe to real-time ticker via WebSocket.
-
-        Yields Ticker snapshots as they arrive from the MEXC WebSocket.
-        Manages reconnection automatically.
-
-        Args:
-            symbol: Trading symbol to watch.
-
-        Yields:
-            Ticker with current bid/ask/last prices.
-
-        Raises:
-            asyncio.CancelledError: When WebSocket is intentionally stopped.
-        """
+        """Subscribe to real-time ticker via WebSocket."""
         if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise RuntimeError("Exchange not connected.")
 
         self._logger.info("ticker_subscribed", symbol=symbol)
 
@@ -269,10 +292,10 @@ class ExchangeInterface:
 
                 ticker = Ticker(
                     symbol=symbol,
-                    bid=float(raw_ticker.get("bid", 0.0)),
-                    ask=float(raw_ticker.get("ask", 0.0)),
-                    last=float(raw_ticker.get("last", 0.0)),
-                    volume_24h=float(raw_ticker.get("baseVolume", 0.0)),
+                    bid=self.safe_float(raw_ticker.get("bid")),
+                    ask=self.safe_float(raw_ticker.get("ask")),
+                    last=self.safe_float(raw_ticker.get("last")),
+                    volume_24h=self.safe_float(raw_ticker.get("baseVolume")),
                     timestamp=datetime.fromtimestamp(
                         raw_ticker["timestamp"] / 1000, tz=timezone.utc
                     )
@@ -377,13 +400,15 @@ class ExchangeInterface:
                 order_type = request.order_type.value
                 side = request.side.value
                 
-                # FIX for MEXC: CCXT's unified symbol 'BTC/USDT:USDT' can trigger
-                # a 'NotSupported' error for createSwapOrder.
-                # Using the native market ID 'BTC_USDT' bypasses this mapping issue.
+                # FIX for MEXC: CCXT's unified symbol 'BTC/USDT:USDT' often triggers
+                # a 'NotSupported' error in createSwapOrder.
+                # Using the native market ID 'BTC_USDT' directly.
                 symbol = request.symbol
                 if self.exchange and self.exchange.id == "mexc":
                     market = self.exchange.market(request.symbol)
                     symbol = market.get("id", request.symbol)
+                    # For MEXC, some CCXT versions also require the native symbol inside params
+                    params["symbol"] = symbol
 
                 raw_order = await self.exchange.create_order(
                     symbol=symbol,

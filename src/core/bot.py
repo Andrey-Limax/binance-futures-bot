@@ -79,9 +79,17 @@ class TradingBot:
             # Warm-up 15m strategy
             warmup_candles = self.config.strategy.warmup_candles
             timeframe = self.config.timeframe
+            # 3. Synchronize Positions with Exchange
+            await self._sync_positions_with_exchange()
+
+            # 4. Strategy Warmup (Load history for Ichimoku)
+            warmup_candles = self.config.strategy.warmup_candles
+            timeframe = self.config.timeframe
             for sym_cfg in enabled_symbols:
+                self._logger.info("strategy_warmup_started", symbol=sym_cfg.symbol, count=warmup_candles)
                 candles = await self.exchange.fetch_ohlcv(sym_cfg.symbol, timeframe=timeframe, limit=warmup_candles)
                 await self.strategy.warm_up(sym_cfg.symbol, candles)
+                self._logger.info("strategy_warmed_up", symbol=sym_cfg.symbol)
 
             self._setup_signal_handlers()
             self._running = True
@@ -112,68 +120,134 @@ class TradingBot:
 
     async def _main_loop(self) -> None:
         enabled_symbols = [s.symbol for s in self.config.trading_symbols if s.enabled]
-        async with asyncio.TaskGroup() as tg:
-            for symbol in enabled_symbols:
-                task = tg.create_task(self._monitor_symbol(symbol), name=f"monitor:{symbol}")
-                self._tasks.append(task)
+        
+        # Start each symbol monitor as an independent task
+        for symbol in enabled_symbols:
+            task = asyncio.create_task(
+                self._safe_monitor_symbol(symbol), 
+                name=f"monitor:{symbol}"
+            )
+            self._tasks.append(task)
+        
+        # Keep the main loop alive while running
+        while self._running:
+            await asyncio.sleep(1)
+
+    async def _safe_monitor_symbol(self, symbol: str) -> None:
+        """Wrapper to provide retry logic for symbol monitoring."""
+        retry_delay = 30
+        while self._running:
+            try:
+                await self._monitor_symbol(symbol)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                self._logger.exception("symbol_monitor_failed", symbol=symbol, next_retry_in=retry_delay)
+                await asyncio.sleep(retry_delay)
 
     async def _monitor_symbol(self, symbol: str) -> None:
         self._logger.info("monitor_started", symbol=symbol)
-        last_bias_update = datetime.utcnow()
+        last_bias_update = datetime.utcnow() - timedelta(hours=1) # Force immediate update
+        last_heartbeat = datetime.utcnow()
+        ticks_received = 0
 
-        try:
-            async for ticker in self.exchange.watch_ticker(symbol):
-                if not self._running: break
+        async for ticker in self.exchange.watch_ticker(symbol):
+            if not self._running: break
+            ticks_received += 1
+            now = datetime.utcnow()
 
-                # 1. Periodic Daily Bias Update (or on new candle)
-                # For simplicity, update every 15 minutes or when the hour changes
-                now = datetime.utcnow()
-                if now - last_bias_update > timedelta(minutes=15):
+            # Heartbeat (Every 100 ticks or 1 minute)
+            if ticks_received % 100 == 0 or (now - last_heartbeat).total_seconds() > 60:
+                self._logger.info("monitor_heartbeat", symbol=symbol, ticks=ticks_received)
+                last_heartbeat = now
+
+            # 1. Hourly Daily Bias Update
+            now = datetime.utcnow()
+            if now - last_bias_update > timedelta(hours=1):
+                try:
                     await self.daily_bias_mgr.calculate_bias(symbol)
                     last_bias_update = now
+                except Exception as e:
+                    self._logger.warning("bias_update_failed_using_cached", symbol=symbol, error=str(e))
 
-                # 2. Daily Bias Check
-                bias = self.daily_bias_mgr.get_last_bias(symbol)
-                if not bias:
-                    bias = await self.daily_bias_mgr.calculate_bias(symbol)
+            # 2. Daily Bias Check
+            bias = self.daily_bias_mgr.get_last_bias(symbol)
+            if not bias:
+                bias = await self.daily_bias_mgr.calculate_bias(symbol)
 
-                # 3. Handle Open Positions (BIAS FLIP CLOSE)
-                position = self.tracker.get_position(symbol)
-                if position:
-                    # Close if bias is contrary
-                    should_close = False
-                    if position.side == PositionSide.LONG and bias.direction == DailyBiasDirection.BEARISH:
-                        should_close = True
-                    elif position.side == PositionSide.SHORT and bias.direction == DailyBiasDirection.BULLISH:
-                        should_close = True
-                    
-                    if should_close:
-                        self._logger.info("bias_flip_closing", symbol=symbol, side=position.side.value, bias=bias.direction.value)
-                        await self._close_position(symbol, reason="bias_flip")
-                        continue
-
-                    # Regular management (SL/TP/Trailing)
-                    await self._manage_position(symbol, ticker)
+            # 3. Handle Open Positions (BIAS FLIP CLOSE)
+            position = self.tracker.get_position(symbol)
+            if position:
+                # Close if bias is contrary
+                should_close = False
+                if position.side == PositionSide.LONG and bias.direction == DailyBiasDirection.BEARISH:
+                    should_close = True
+                elif position.side == PositionSide.SHORT and bias.direction == DailyBiasDirection.BULLISH:
+                    should_close = True
+                
+                if should_close:
+                    self._logger.info("bias_flip_closing", symbol=symbol, side=position.side.value, bias=bias.direction.value)
+                    await self._close_position(symbol, reason="bias_flip")
                     continue
 
-                # 4. Entry Logic (Only if no position)
-                # Circuit Breaker Check
-                if not await self._is_trading_allowed(symbol): continue
+                # Regular management (SL/TP/Trailing)
+                await self._manage_position(symbol, ticker)
+                continue
 
-                # Strategy Trigger (15m TK Cross)
-                from src.models import OHLCV
-                candle = OHLCV(ticker.timestamp, ticker.last, ticker.last, ticker.last, ticker.last, ticker.volume_24h)
-                self.strategy.update_candle(symbol, candle, self.config.timeframe)
-                
-                signal = self.strategy.generate_signal(symbol)
-                if signal.signal != Signal.NEUTRAL:
-                    await self._handle_mtf_signal(symbol, signal, ticker, bias)
+            # 4. Entry Logic (Only if no position)
+            # Circuit Breaker Check
+            if not await self._is_trading_allowed(symbol): continue
 
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            self._logger.exception("monitor_error", symbol=symbol)
-            raise
+            # Strategy Trigger (15m TK Cross)
+            from src.models import OHLCV
+            candle = OHLCV(ticker.timestamp, ticker.last, ticker.last, ticker.last, ticker.last, ticker.volume_24h)
+            self.strategy.update_candle(symbol, candle, self.config.timeframe)
+            
+            signal = self.strategy.generate_signal(symbol)
+            if signal.signal != Signal.NEUTRAL:
+                await self._handle_mtf_signal(symbol, signal, ticker, bias)
+
+    async def _sync_positions_with_exchange(self) -> None:
+        """Startup sync: Ensure local PositionTracker matches MEXC active positions."""
+        self._logger.info("startup_position_sync_started")
+        try:
+            exchange_positions = await self.exchange.fetch_positions()
+            local_positions = self.tracker.get_all_positions()
+            local_symbols = {p.symbol for p in local_positions}
+            exchange_symbols = {p["symbol"] for p in exchange_positions}
+
+            # 1. Remove local positions that no longer exist on exchange
+            for symbol in local_symbols:
+                if symbol not in exchange_symbols:
+                    self._logger.warning("sync_removing_ghost_position", symbol=symbol)
+                    self.tracker.remove_position(symbol)
+
+            # 2. Add/Update positions from exchange to local tracker
+            for p in exchange_positions:
+                symbol = p["symbol"]
+                side = PositionSide.LONG if float(p.get("entryPrice", 0)) > 0 and p.get("side") == "long" else PositionSide.SHORT
+                # Simplified mapping for sync
+                if symbol not in local_symbols:
+                    self._logger.info("sync_adding_found_position", symbol=symbol)
+                    # Note: We create a minimal position object. 
+                    # If the bot didn't open it, it might lack SL/TP info initially.
+                    from src.models import Position
+                    new_pos = Position(
+                        symbol=symbol,
+                        side=side,
+                        entry_price=float(p.get("entryPrice", 0)),
+                        amount=float(p.get("contracts", 0)),
+                        leverage=int(p.get("leverage", 1)),
+                        stop_loss=0.0,
+                        take_profit=0.0,
+                        opened_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow()
+                    )
+                    self.tracker.save_position(new_pos)
+
+            self._logger.info("startup_position_sync_completed", active=len(exchange_positions))
+        except Exception as e:
+            self._logger.error("startup_position_sync_failed", error=str(e))
 
     async def _handle_mtf_signal(self, symbol: str, signal: StrategySignal, ticker: Ticker, bias: DailyBiasResult) -> None:
         # Check Cooldown (at least 15m since last entry)

@@ -4,6 +4,7 @@
 
 # --- Exchange Connectivity (ccxt.pro / WebSocket) ---
 ccxt==4.5.45
+protobuf==5.29.5
 
 # --- Data Validation & Settings ---
 pydantic==2.12.5
