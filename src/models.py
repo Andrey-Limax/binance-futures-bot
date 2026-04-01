@@ -54,6 +54,21 @@ class Signal(str, enum.Enum):
     STRONG_SELL = "strong_sell"
 
 
+class DailyBiasDirection(str, enum.Enum):
+    """Direction of the daily timeframe bias."""
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    IN_CLOUD = "in_cloud"
+    NEUTRAL = "neutral"
+
+
+class TKCrossDirection(str, enum.Enum):
+    """Direction of the Tenkan-Kijun cross."""
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    NONE = "none"
+
+
 # ─── Config Models (Pydantic) ────────────────────────────────────────────────
 
 class TradingSymbolConfig(BaseModel):
@@ -109,6 +124,15 @@ class CircuitBreakerConfig(BaseModel):
     cooldown_minutes: int = Field(default=30, ge=1)
 
 
+class DailyBiasConfig(BaseModel):
+    """Configuration for the Daily Timeframe Bias anchor."""
+    kijun_period: int = Field(default=26, ge=1)
+    polling_interval_candles: int = Field(default=1, ge=1)
+    inside_cloud_size_factor: float = Field(default=0.5, gt=0, le=1)
+    bias_cooldown_candles: int = Field(default=1, ge=1)
+    enabled: bool = Field(default=True)
+
+
 class AppConfig(BaseModel):
     """Root application configuration aggregating all sub-configs."""
     # MEXC credentials
@@ -125,6 +149,7 @@ class AppConfig(BaseModel):
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     sentiment: SentimentConfig = Field(default_factory=SentimentConfig)
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
+    daily_bias: DailyBiasConfig = Field(default_factory=DailyBiasConfig)
 
     # Leverage
     default_leverage: int = Field(default=6, ge=1, le=20)
@@ -189,6 +214,24 @@ class StrategySignal:
     take_profit: float
     timestamp: datetime
     metadata: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DailyBiasResult:
+    """Result of the daily timeframe bias analysis."""
+    direction: DailyBiasDirection
+    size_multiplier: float
+    kijun: float
+    cloud_top: float
+    cloud_bottom: float
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class TKCrossSignal:
+    """High-frequency trigger from Tenkan-Kijun cross."""
+    direction: TKCrossDirection
+    timestamp: datetime
 
 
 # ─── Sentiment Models ────────────────────────────────────────────────────────
