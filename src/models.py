@@ -117,6 +117,8 @@ class AppConfig(BaseModel):
 
     # Trading
     trading_symbols: list[TradingSymbolConfig] = Field(default_factory=list)
+    timeframe: str = Field(default="1h")
+
 
     # Sub-configs
     risk: RiskConfig = Field(default_factory=RiskConfig)

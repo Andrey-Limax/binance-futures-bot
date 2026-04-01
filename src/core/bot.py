@@ -126,10 +126,11 @@ class TradingBot:
 
             # 4. Warm-up strategy indicators with historical candles
             warmup_candles = self.config.strategy.warmup_candles
+            timeframe = getattr(self.config, 'timeframe', '1h')
             for sym_cfg in enabled_symbols:
                 candles = await self.exchange.fetch_ohlcv(
                     sym_cfg.symbol,
-                    timeframe="1m",
+                    timeframe=timeframe,
                     limit=warmup_candles,
                 )
                 ok = await self.strategy.warm_up(sym_cfg.symbol, candles)

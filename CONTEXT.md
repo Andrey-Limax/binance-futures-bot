@@ -2,7 +2,7 @@
 
 ## Status Geral
 **Fase atual:** DRY_RUN mode implementado
-**Última atualização:** 2026-03-28 (fix disconnect)
+**Última atualização:** 2026-04-01 (configurable timeframe)
 
 ---
 
@@ -42,6 +42,11 @@
   - [x] config.py — Settings.dry_run + to_app_config() + get_masked_config()
   - [x] exchange.py — safe_order_execution(dry_run) + set_leverage(dry_run): simula ordens com OrderResult sintético
   - [x] bot.py — self.dry_run armazenado, passado para set_leverage e safe_order_execution
+- [x] Timeframe Configurável:
+  - [x] models.py — AppConfig.timeframe: str = "1h"
+  - [x] config.py — Settings.timeframe + to_app_config() + get_masked_config()
+  - [x] bot.py — start() usa o timeframe do .env para o fetch_ohlcv do warm-up
+  - [x] .env.example — TIMEFRAME=1h adicionado
 
 ## Decisões Técnicas Tomadas
 - Stack: Python 3.11+, asyncio, ccxt.pro, pandas-ta-classic (fork), Pydantic v2

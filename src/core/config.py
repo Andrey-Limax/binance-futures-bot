@@ -51,6 +51,7 @@ class Settings(BaseSettings):
         default="BTC/USDT:USDT,ETH/USDT:USDT",
         description="Comma-separated list of symbols in CCXT format",
     )
+    timeframe: str = Field(default="1h")
 
     # ── Leverage ──────────────────────────────────────────────────────────
     default_leverage: int = Field(default=6, ge=1, le=20)
@@ -150,6 +151,7 @@ class ConfigManager:
             mexc_api_key=s.mexc_api_key,
             mexc_api_secret=s.mexc_api_secret,
             trading_symbols=self._parse_trading_symbols(),
+            timeframe=s.timeframe,
             default_leverage=s.default_leverage,
             max_leverage=s.max_leverage,
             min_leverage=s.min_leverage,
@@ -231,6 +233,7 @@ class ConfigManager:
             "mexc_api_key": "***MASKED***",
             "mexc_api_secret": "***MASKED***",
             "trading_symbols": s.trading_symbols,
+            "timeframe": s.timeframe,
             "default_leverage": s.default_leverage,
             "max_leverage": s.max_leverage,
             "min_leverage": s.min_leverage,
