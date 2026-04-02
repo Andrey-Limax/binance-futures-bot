@@ -344,8 +344,13 @@ class TradingBot:
             await self.exchange.safe_order_execution(order, dry_run=self.dry_run)
             self.tracker.remove_position(symbol)
             self._logger.info("position_closed", symbol=symbol, reason=reason)
-        except:
-            self._logger.exception("close_failed", symbol=symbol)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "2009" in error_msg or "nonexistent" in error_msg:
+                self._logger.warning("ghost_position_cleared", symbol=symbol, reason="not_on_exchange")
+                self.tracker.remove_position(symbol)
+            else:
+                self._logger.exception("close_failed", symbol=symbol)
 
     def _setup_signal_handlers(self) -> None:
         loop = asyncio.get_running_loop()
