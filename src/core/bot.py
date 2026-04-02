@@ -220,14 +220,15 @@ class TradingBot:
                     self.tracker.remove_position(symbol)
 
             # 2. Add/Update positions from exchange to local tracker
+            # DISABLED: To prevent the bot from hijacking manual trades placed by the
+            # user, we no longer adopt unknown positions. The bot will only manage
+            # positions that it has explicitly opened and saved to its local SQLite db.
+            """
             for p in exchange_positions:
                 symbol = p["symbol"]
                 side = PositionSide.LONG if float(p.get("entryPrice", 0)) > 0 and p.get("side") == "long" else PositionSide.SHORT
-                # Simplified mapping for sync
                 if symbol not in local_symbols:
                     self._logger.info("sync_adding_found_position", symbol=symbol)
-                    # Note: We create a minimal position object. 
-                    # If the bot didn't open it, it might lack SL/TP info initially.
                     from src.models import Position
                     new_pos = Position(
                         symbol=symbol,
@@ -242,6 +243,7 @@ class TradingBot:
                         updated_at=datetime.utcnow()
                     )
                     self.tracker.save_position(new_pos)
+            """
 
             self._logger.info("startup_position_sync_completed", active=len(exchange_positions))
         except Exception as e:
