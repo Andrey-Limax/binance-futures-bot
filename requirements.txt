@@ -3,7 +3,7 @@
 # =============================================================================
 
 # --- Exchange Connectivity (ccxt.pro / WebSocket) ---
-ccxt==4.5.45
+ccxt>=4.5.80
 protobuf==5.29.5
 
 # --- Data Validation & Settings ---
