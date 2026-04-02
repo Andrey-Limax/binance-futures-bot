@@ -82,13 +82,15 @@ class ExchangeInterface:
                     "secret": self._api_secret,
                     "options": {
                         "defaultType": "swap",
-                        # CCXT has a hardcoded block for major pairs (BTC/ETH/LTC) on MEXC
-                        # to prevent vague error messages. We clear it to allow the bot
-                        # to trade these pairs.
-                        "unavailableContracts": {},
                     },
                 }
             )
+            
+            # CCXT has a hardcoded block for major pairs (BTC/ETH/LTC) on MEXC
+            # to prevent vague error messages. We clear it EXPLICITLY after init
+            # to override CCXT's deep_extend behavior which ignores empty dicts.
+            self.exchange.options["unavailableContracts"] = {}
+
 
             # Load markets with retry for stability
             max_retries = 5
@@ -422,12 +424,12 @@ class ExchangeInterface:
                 order_type = request.order_type.value
                 side = request.side.value
                 
-                # For MEXC, we must use the native market ID (e.g. ETH_USDT)
-                # combined with a CCXT version that might be having trouble mapping
-                # the unified symbol (ETH/USDT:USDT) back to the native ID.
-                symbol = self._get_mexc_native_symbol(request.symbol)
-                if self.exchange and self.exchange.id == "mexc":
-                    params["symbol"] = symbol
+                # Use the unified CCXT symbol (e.g. ETH/USDT:USDT) directly.
+                # Passing the native ID (ETH_USDT) causes CCXT to call
+                # createSwapOrder internally, which MEXC does not support.
+                # With defaultType="swap" set at connect(), create_order routes
+                # correctly to the futures endpoint using the unified symbol.
+                symbol = request.symbol
 
                 raw_order = await self.exchange.create_order(
                     symbol=symbol,
@@ -656,15 +658,14 @@ class ExchangeInterface:
         # positionType: 1 = long, 2 = short
         position_type = 1 if position_side == "long" else 2
         
-        # Use native symbol for MEXC
-        native_symbol = self._get_mexc_native_symbol(symbol)
-
+        # Use unified symbol — MEXC leverage endpoint via CCXT resolves
+        # correctly with defaultType="swap". Native ID causes routing issues.
         try:
             params = {
                 "openType": 2,  # Cross margin (matches MEXC account default)
                 "positionType": position_type,
             }
-            await self.exchange.set_leverage(leverage, native_symbol, params=params)
+            await self.exchange.set_leverage(leverage, symbol, params=params)
         except ccxt.ExchangeError as exc:
             err_str = str(exc)
             # MEXC code 2044: leverage already set or position open — safe to ignore
