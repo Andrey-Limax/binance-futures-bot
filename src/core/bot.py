@@ -72,17 +72,14 @@ class TradingBot:
 
             self.tracker.open()
             
-            # Initial bias sync for all symbols
+            # 1. Initial bias sync for all symbols
             for sym_cfg in enabled_symbols:
                 await self.daily_bias_mgr.calculate_bias(sym_cfg.symbol)
 
-            # Warm-up 15m strategy
-            warmup_candles = self.config.strategy.warmup_candles
-            timeframe = self.config.timeframe
-            # 3. Synchronize Positions with Exchange
+            # 2. Synchronize Positions with Exchange
             await self._sync_positions_with_exchange()
 
-            # 4. Strategy Warmup (Load history for Ichimoku)
+            # 3. Strategy Warmup (Load history for Ichimoku)
             warmup_candles = self.config.strategy.warmup_candles
             timeframe = self.config.timeframe
             for sym_cfg in enabled_symbols:
@@ -272,6 +269,15 @@ class TradingBot:
 
     async def _open_mtf_position(self, symbol: str, signal: StrategySignal, ticker: Ticker, bias: DailyBiasResult) -> None:
         try:
+            # Safety: check if exchange already has a position for this symbol
+            try:
+                exchange_positions = await self.exchange.fetch_positions(symbol)
+                if exchange_positions:
+                    self._logger.warning("position_already_exists_on_exchange", symbol=symbol, count=len(exchange_positions))
+                    return
+            except Exception:
+                pass  # If we can't check, proceed cautiously
+
             side = Side.BUY if signal.signal in (Signal.BUY, Signal.STRONG_BUY) else Side.SELL
             position_side = "long" if side == Side.BUY else "short"
             

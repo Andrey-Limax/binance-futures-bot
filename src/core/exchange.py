@@ -413,14 +413,7 @@ class ExchangeInterface:
 
                 order_type = request.order_type.value
                 side = request.side.value
-                
-                # FIX for MEXC: CCXT's unified symbol 'BTC/USDT:USDT' often triggers
-                # a 'NotSupported' error in createSwapOrder.
-                # Using the native market ID 'BTC_USDT' directly.
-                symbol = self._get_mexc_native_symbol(request.symbol)
-                if self.exchange and self.exchange.id == "mexc":
-                    # For MEXC, some CCXT versions also require the native symbol inside params
-                    params["symbol"] = symbol
+                symbol = request.symbol  # Already in CCXT swap format (e.g. BTC/USDT:USDT)
 
                 raw_order = await self.exchange.create_order(
                     symbol=symbol,
@@ -648,22 +641,18 @@ class ExchangeInterface:
         # openType: 1 = isolated margin, 2 = cross margin
         # positionType: 1 = long, 2 = short
         position_type = 1 if position_side == "long" else 2
-        native_symbol = self._get_mexc_native_symbol(symbol)
 
         try:
-            # Try Isolated Margin mode first
             params = {
-                "openType": 1,
+                "openType": 2,  # Cross margin (matches MEXC account default)
                 "positionType": position_type,
             }
-            await self.exchange.set_leverage(leverage, native_symbol, params=params)
+            await self.exchange.set_leverage(leverage, symbol, params=params)
         except ccxt.ExchangeError as exc:
             err_str = str(exc)
-            # MEXC code 6007: Switching from Cross Margin mode to Isolated Margin Mode is not supported
-            if "6007" in err_str or "not supported" in err_str.lower():
-                self._logger.warning("fallback_to_cross_margin", symbol=symbol, reason="isolated_margin_rejected")
-                params["openType"] = 2
-                await self.exchange.set_leverage(leverage, native_symbol, params=params)
+            # MEXC code 2044: leverage already set or position open — safe to ignore
+            if "2044" in err_str or "Insufficient margin" in err_str:
+                self._logger.warning("leverage_skip_existing_position", symbol=symbol, reason="position_already_open")
             else:
                 raise
 

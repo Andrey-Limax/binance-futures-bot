@@ -182,6 +182,10 @@ class ConfigManager:
         for entry in raw.split(","):
             entry = entry.strip()
             if entry:
+                # Auto-normalize to CCXT swap format (e.g. BTC/USDT -> BTC/USDT:USDT)
+                # This is REQUIRED for MEXC futures — without ':USDT' CCXT resolves to spot market
+                if "/" in entry and ":" not in entry:
+                    entry = f"{entry}:USDT"
                 symbols.append(
                     TradingSymbolConfig(
                         symbol=entry,
