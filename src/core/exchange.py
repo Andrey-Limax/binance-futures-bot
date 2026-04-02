@@ -82,6 +82,10 @@ class ExchangeInterface:
                     "secret": self._api_secret,
                     "options": {
                         "defaultType": "swap",
+                        # CCXT has a hardcoded block for major pairs (BTC/ETH/LTC) on MEXC
+                        # to prevent vague error messages. We clear it to allow the bot
+                        # to trade these pairs.
+                        "unavailableContracts": {},
                     },
                 }
             )
