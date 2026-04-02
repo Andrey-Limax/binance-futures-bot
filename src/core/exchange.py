@@ -648,15 +648,25 @@ class ExchangeInterface:
         # openType: 1 = isolated margin, 2 = cross margin
         # positionType: 1 = long, 2 = short
         position_type = 1 if position_side == "long" else 2
-        params = {
-            "openType": 1,          # isolated margin
-            "positionType": position_type,
-        }
-
-        # Use native market ID for MEXC (e.g., 'BTC_USDT' instead of 'BTC/USDT:USDT')
         native_symbol = self._get_mexc_native_symbol(symbol)
 
-        await self.exchange.set_leverage(leverage, native_symbol, params=params)
+        try:
+            # Try Isolated Margin mode first
+            params = {
+                "openType": 1,
+                "positionType": position_type,
+            }
+            await self.exchange.set_leverage(leverage, native_symbol, params=params)
+        except ccxt.ExchangeError as exc:
+            err_str = str(exc)
+            # MEXC code 6007: Switching from Cross Margin mode to Isolated Margin Mode is not supported
+            if "6007" in err_str or "not supported" in err_str.lower():
+                self._logger.warning("fallback_to_cross_margin", symbol=symbol, reason="isolated_margin_rejected")
+                params["openType"] = 2
+                await self.exchange.set_leverage(leverage, native_symbol, params=params)
+            else:
+                raise
+
         self._logger.info(
             "leverage_set",
             symbol=symbol,
