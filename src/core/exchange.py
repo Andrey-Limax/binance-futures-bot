@@ -132,17 +132,21 @@ class ExchangeInterface:
             return default
 
     def _get_mexc_native_symbol(self, symbol: str) -> str:
-        """Resolve generic symbol (e.g. BTC/USDT) to MEXC Futures ID (BTC_USDT).
+        """Resolve any symbol format back to the MEXC native ID (e.g. ETH_USDT).
         
-        CCXT requires the ':USDT' suffix to identify swap markets correctly.
+        This is used to bypass CCXT's 'NotSupported' errors when it fails to
+        map unified symbols (ETH/USDT:USDT) back to native IDs for execution.
         """
         if self.exchange and self.exchange.id == "mexc":
-            ccxt_symbol = f"{symbol}:USDT" if ":" not in symbol else symbol
+            # Strip :USDT if present to help lookup
+            bare_symbol = symbol.split(":")[0] if ":" in symbol else symbol
             try:
-                market = self.exchange.market(ccxt_symbol)
-                return market.get("id", ccxt_symbol)
+                # Try locating by unified name first
+                market = self.exchange.market(symbol)
+                return market.get("id", bare_symbol.replace("/", "_"))
             except Exception:
-                pass
+                # Fallback to manual replacement if market lookup fails
+                return bare_symbol.replace("/", "_")
         return symbol
 
     async def fetch_ohlcv(
@@ -413,7 +417,13 @@ class ExchangeInterface:
 
                 order_type = request.order_type.value
                 side = request.side.value
-                symbol = request.symbol  # Already in CCXT swap format (e.g. BTC/USDT:USDT)
+                
+                # For MEXC, we must use the native market ID (e.g. ETH_USDT)
+                # combined with a CCXT version that might be having trouble mapping
+                # the unified symbol (ETH/USDT:USDT) back to the native ID.
+                symbol = self._get_mexc_native_symbol(request.symbol)
+                if self.exchange and self.exchange.id == "mexc":
+                    params["symbol"] = symbol
 
                 raw_order = await self.exchange.create_order(
                     symbol=symbol,
@@ -641,13 +651,16 @@ class ExchangeInterface:
         # openType: 1 = isolated margin, 2 = cross margin
         # positionType: 1 = long, 2 = short
         position_type = 1 if position_side == "long" else 2
+        
+        # Use native symbol for MEXC
+        native_symbol = self._get_mexc_native_symbol(symbol)
 
         try:
             params = {
                 "openType": 2,  # Cross margin (matches MEXC account default)
                 "positionType": position_type,
             }
-            await self.exchange.set_leverage(leverage, symbol, params=params)
+            await self.exchange.set_leverage(leverage, native_symbol, params=params)
         except ccxt.ExchangeError as exc:
             err_str = str(exc)
             # MEXC code 2044: leverage already set or position open — safe to ignore
