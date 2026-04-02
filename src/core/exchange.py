@@ -131,6 +131,20 @@ class ExchangeInterface:
         except (ValueError, TypeError):
             return default
 
+    def _get_mexc_native_symbol(self, symbol: str) -> str:
+        """Resolve generic symbol (e.g. BTC/USDT) to MEXC Futures ID (BTC_USDT).
+        
+        CCXT requires the ':USDT' suffix to identify swap markets correctly.
+        """
+        if self.exchange and self.exchange.id == "mexc":
+            ccxt_symbol = f"{symbol}:USDT" if ":" not in symbol else symbol
+            try:
+                market = self.exchange.market(ccxt_symbol)
+                return market.get("id", ccxt_symbol)
+            except Exception:
+                pass
+        return symbol
+
     async def fetch_ohlcv(
         self,
         symbol: str,
@@ -403,10 +417,8 @@ class ExchangeInterface:
                 # FIX for MEXC: CCXT's unified symbol 'BTC/USDT:USDT' often triggers
                 # a 'NotSupported' error in createSwapOrder.
                 # Using the native market ID 'BTC_USDT' directly.
-                symbol = request.symbol
+                symbol = self._get_mexc_native_symbol(request.symbol)
                 if self.exchange and self.exchange.id == "mexc":
-                    market = self.exchange.market(request.symbol)
-                    symbol = market.get("id", request.symbol)
                     # For MEXC, some CCXT versions also require the native symbol inside params
                     params["symbol"] = symbol
 
@@ -642,10 +654,7 @@ class ExchangeInterface:
         }
 
         # Use native market ID for MEXC (e.g., 'BTC_USDT' instead of 'BTC/USDT:USDT')
-        native_symbol = symbol
-        if self.exchange.id == "mexc":
-            market = self.exchange.market(symbol)
-            native_symbol = market.get("id", symbol)
+        native_symbol = self._get_mexc_native_symbol(symbol)
 
         await self.exchange.set_leverage(leverage, native_symbol, params=params)
         self._logger.info(
