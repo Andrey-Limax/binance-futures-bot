@@ -23,6 +23,7 @@ from src.models import (
     OrderStatus,
     Side,
     Ticker,
+    OrderType,
 )
 
 logger = structlog.get_logger(__name__)
@@ -37,11 +38,6 @@ class ExchangeInterface:
         - Execute orders with retry logic for transient failures
         - Format amounts/prices according to exchange precision rules
         - Fetch historical OHLCV data for strategy warm-up
-
-    Attributes:
-        exchange: ccxt.pro.mexc instance (async)
-        _precision_cache: Cache of AssetPrecision per symbol
-        _ws_running: Flag to control WebSocket lifecycle
     """
 
     def __init__(
@@ -49,16 +45,6 @@ class ExchangeInterface:
         api_key: str,
         api_secret: str,
     ) -> None:
-        """Initialize the exchange interface.
-
-        Args:
-            api_key: MEXC API key.
-            api_secret: MEXC API secret.
-
-        Note:
-            MEXC does not support testnet/sandbox via ccxt.
-            The bot always connects to the live exchange.
-        """
         self._logger = logger.bind(component="ExchangeInterface")
         self._precision_cache: dict[str, AssetPrecision] = {}
         self._ws_running: bool = False
@@ -86,11 +72,9 @@ class ExchangeInterface:
                 }
             )
             
-            # CCXT has a hardcoded block for major pairs (BTC/ETH/LTC) on MEXC
-            # to prevent vague error messages. We clear it EXPLICITLY after init
-            # to override CCXT's deep_extend behavior which ignores empty dicts.
+            # CCXT has a hardcoded block for major pairs (BTC/ETH/LTC) on MEXC.
+            # We clear it explicitly to allow trading these pairs.
             self.exchange.options["unavailableContracts"] = {}
-
 
             # Load markets with retry for stability
             max_retries = 5
@@ -105,7 +89,6 @@ class ExchangeInterface:
                     return
                 except (ccxt.NetworkError, ccxt.RequestTimeout) as exc:
                     if attempt == max_retries:
-                        self._logger.error("exchange_load_markets_failed_final", error=str(exc))
                         raise
                     self._logger.warning("exchange_load_markets_retry", attempt=attempt, error=str(exc))
                     await asyncio.sleep(2**attempt)
@@ -129,7 +112,6 @@ class ExchangeInterface:
                 self.exchange = None
 
     def safe_float(self, value: Any, default: float = 0.0) -> float:
-        """Safely convert value to float, handling None and invalid strings."""
         if value is None:
             return default
         try:
@@ -137,88 +119,20 @@ class ExchangeInterface:
         except (ValueError, TypeError):
             return default
 
-    def _get_mexc_native_symbol(self, symbol: str) -> str:
-        """Resolve any symbol format back to the MEXC native ID (e.g. ETH_USDT).
-        
-        This is used to bypass CCXT's 'NotSupported' errors when it fails to
-        map unified symbols (ETH/USDT:USDT) back to native IDs for execution.
-        """
-        if self.exchange and self.exchange.id == "mexc":
-            # Strip :USDT if present to help lookup
-            bare_symbol = symbol.split(":")[0] if ":" in symbol else symbol
-            try:
-                # Try locating by unified name first
-                market = self.exchange.market(symbol)
-                return market.get("id", bare_symbol.replace("/", "_"))
-            except Exception:
-                # Fallback to manual replacement if market lookup fails
-                return bare_symbol.replace("/", "_")
-        return symbol
-
-    async def fetch_ohlcv(
-        self,
-        symbol: str,
-        timeframe: str = "15m",
-        limit: int = 100,
-        max_retries: int = 3,
-    ) -> list[OHLCV]:
-        """Fetch historical candle data from the exchange with retry logic."""
-        if self.exchange is None:
-            raise RuntimeError("Exchange not connected.")
-
-        last_error = None
-        for attempt in range(1, max_retries + 1):
-            try:
-                raw_candles = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-                return [
-                    OHLCV(
-                        timestamp=datetime.fromtimestamp(c[0] / 1000, tz=timezone.utc),
-                        open=float(c[1]),
-                        high=float(c[2]),
-                        low=float(c[3]),
-                        close=float(c[4]),
-                        volume=float(c[5]),
-                    )
-                    for c in raw_candles
-                ]
-            except (ccxt.NetworkError, ccxt.ExchangeError) as exc:
-                last_error = exc
-                self._logger.warning("fetch_ohlcv_retry", symbol=symbol, attempt=attempt, error=str(exc))
-                await asyncio.sleep(2**attempt)
-
-        raise last_error
-
-    # ── Market Data ────────────────────────────────────────────────────────
-
     async def load_precision(self, symbol: str) -> AssetPrecision:
-        """Load and cache tick size / lot size rules for a symbol.
-
-        Fetches market info from MEXC and extracts precision rules.
-        Results are cached to avoid repeated API calls.
-
-        Args:
-            symbol: Trading symbol in CCXT format (e.g., 'BTC/USDT:USDT').
-
-        Returns:
-            AssetPrecision with tick_size, lot_size, min/max amounts.
-        """
+        """Load and cache tick size / lot size rules for a symbol."""
         if symbol in self._precision_cache:
             return self._precision_cache[symbol]
 
         if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise RuntimeError("Exchange not connected.")
 
         market = self.exchange.market(symbol)
-
-        # Extract precision from market info.
-        # CCXT standardises these under market['precision']['amount'] and
-        # market['precision']['price'].  Some exchanges report the number of
-        # decimal places (int) while others report the step size (float).
         precision_info = market.get("precision", {})
         price_prec = precision_info.get("price", 8)
         amount_prec = precision_info.get("amount", 8)
 
-        # Convert decimal-places integers to step-size floats when needed.
+        # Convert decimal-places integers to step-size floats
         if isinstance(price_prec, int):
             tick_size = float(Decimal("1").scaleb(-price_prec))
         else:
@@ -235,22 +149,17 @@ class ExchangeInterface:
 
         asset_precision = AssetPrecision(
             symbol=symbol,
-            price_precision=price_prec if isinstance(price_prec, int) else len(str(tick_size).split(".")[1]) if "." in str(tick_size) else 0,
-            amount_precision=amount_prec if isinstance(amount_prec, int) else len(str(lot_size).split(".")[1]) if "." in str(lot_size) else 0,
+            price_precision=price_prec if isinstance(price_prec, int) else 8,
+            amount_precision=amount_prec if isinstance(amount_prec, int) else 8,
             tick_size=tick_size,
             lot_size=lot_size,
-            min_amount=float(amount_limits.get("min") if amount_limits.get("min") is not None else 0.0),
-            max_amount=float(amount_limits.get("max") if amount_limits.get("max") is not None else float("inf")),
-            min_cost=float(cost_limits.get("min") if cost_limits.get("min") is not None else 0.0),
+            min_amount=float(amount_limits.get("min") or 0.0),
+            max_amount=float(amount_limits.get("max") or float("inf")),
+            min_cost=float(cost_limits.get("min") or 0.0),
+            contract_size=float(market.get("contractSize", 1.0)),
         )
 
         self._precision_cache[symbol] = asset_precision
-        self._logger.info(
-            "precision_loaded",
-            symbol=symbol,
-            tick_size=tick_size,
-            lot_size=lot_size,
-        )
         return asset_precision
 
     async def fetch_ohlcv(
@@ -259,134 +168,53 @@ class ExchangeInterface:
         timeframe: str = "1m",
         limit: int = 100,
     ) -> list[OHLCV]:
-        """Fetch historical OHLCV candles for strategy warm-up.
-
-        Downloads the last `limit` candles to populate indicators
-        (Ichimoku, MACD, RSI) before live trading begins.
-
-        Args:
-            symbol: Trading symbol.
-            timeframe: Candle timeframe (e.g., '1m', '5m', '1h').
-            limit: Number of candles to fetch.
-
-        Returns:
-            List of OHLCV candles sorted oldest to newest.
-        """
-        if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
-
-        raw_candles: list[list] = await self.exchange.fetch_ohlcv(
-            symbol,
-            timeframe=timeframe,
-            limit=limit,
-        )
-
-        candles: list[OHLCV] = []
-        for entry in raw_candles:
-            # Each entry is [timestamp, open, high, low, close, volume]
-            candles.append(
-                OHLCV(
-                    timestamp=datetime.fromtimestamp(entry[0] / 1000, tz=timezone.utc),
-                    open=float(entry[1]),
-                    high=float(entry[2]),
-                    low=float(entry[3]),
-                    close=float(entry[4]),
-                    volume=float(entry[5]),
-                )
-            )
-
-        self._logger.debug(
-            "ohlcv_fetched",
-            symbol=symbol,
-            timeframe=timeframe,
-            count=len(candles),
-        )
-        return candles
-
-    async def watch_ticker(self, symbol: str) -> AsyncGenerator[Ticker, None]:
-        """Subscribe to real-time ticker via WebSocket."""
         if self.exchange is None:
             raise RuntimeError("Exchange not connected.")
+        raw_candles = await self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        return [
+            OHLCV(
+                timestamp=datetime.fromtimestamp(c[0] / 1000, tz=timezone.utc),
+                open=float(c[1]),
+                high=float(c[2]),
+                low=float(c[3]),
+                close=float(c[4]),
+                volume=float(c[5]),
+            )
+            for c in raw_candles
+        ]
 
-        self._logger.info("ticker_subscribed", symbol=symbol)
-
+    async def watch_ticker(self, symbol: str) -> AsyncGenerator[Ticker, None]:
+        if self.exchange is None:
+            raise RuntimeError("Exchange not connected.")
+        
         while self._ws_running:
             try:
                 raw_ticker = await self.exchange.watch_ticker(symbol)
-
-                ticker = Ticker(
+                yield Ticker(
                     symbol=symbol,
                     bid=self.safe_float(raw_ticker.get("bid")),
                     ask=self.safe_float(raw_ticker.get("ask")),
                     last=self.safe_float(raw_ticker.get("last")),
                     volume_24h=self.safe_float(raw_ticker.get("baseVolume")),
-                    timestamp=datetime.fromtimestamp(
-                        raw_ticker["timestamp"] / 1000, tz=timezone.utc
-                    )
-                    if raw_ticker.get("timestamp")
-                    else datetime.now(timezone.utc),
+                    timestamp=datetime.fromtimestamp(raw_ticker["timestamp"] / 1000, tz=timezone.utc)
+                    if raw_ticker.get("timestamp") else datetime.now(timezone.utc),
                 )
-
-                yield ticker
-
             except asyncio.CancelledError:
-                self._logger.info("ticker_unsubscribed", symbol=symbol)
                 raise
-            except ccxt.NetworkError as exc:
-                self._logger.warning(
-                    "ticker_network_error",
-                    symbol=symbol,
-                    error=str(exc),
-                )
+            except Exception as exc:
+                self._logger.warning("ticker_error", symbol=symbol, error=str(exc))
                 await asyncio.sleep(1)
-            except ccxt.ExchangeError as exc:
-                self._logger.error(
-                    "ticker_exchange_error",
-                    symbol=symbol,
-                    error=str(exc),
-                )
-                raise
-
-    # ── Order Execution ────────────────────────────────────────────────────
 
     async def safe_order_execution(
         self,
         request: OrderRequest,
         dry_run: bool = False,
     ) -> OrderResult:
-        """Execute an order with error-specific retry logic.
-
-        Error handling strategy:
-            - ccxt.NetworkError: Retry up to 3 times with exponential backoff.
-            - ccxt.ExchangeError: Abort immediately, log error details.
-            - ccxt.InvalidOrder: Abort, log order validation failure.
-
-        Before execution, amounts are formatted via `format_amount()`.
-
-        Args:
-            request: Validated OrderRequest with symbol, side, amount, etc.
-            dry_run: If True, simulate the order without executing on exchange.
-
-        Returns:
-            OrderResult with execution details.
-
-        Raises:
-            ExchangeExecutionError: For non-retryable exchange errors.
-            MaxRetriesExceededError: After exhausting network retries.
-        """
         if dry_run:
-            self._logger.info(
-                "dry_run_order_skipped",
-                symbol=request.symbol,
-                side=request.side.value,
-                amount=request.amount,
-                leverage=request.leverage,
-                stop_loss=request.stop_loss,
-                take_profit=request.take_profit,
-            )
+            self._logger.info("dry_run_order", symbol=request.symbol, side=request.side.value, amount=request.amount)
             return OrderResult(
                 order_id=f"DRY_RUN_{datetime.now(timezone.utc).timestamp()}",
-                client_order_id=None,
+                client_order_id=request.client_order_id,
                 symbol=request.symbol,
                 side=request.side,
                 order_type=request.order_type,
@@ -401,329 +229,118 @@ class ExchangeInterface:
             )
 
         if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+            raise RuntimeError("Exchange not connected.")
 
         formatted_amount = self.format_amount(request.symbol, request.amount)
-        formatted_price = (
-            self.format_price(request.symbol, request.price)
-            if request.price is not None
-            else None
-        )
+        formatted_price = self.format_price(request.symbol, request.price) if request.price else None
 
         max_retries = 3
-        last_error: Optional[Exception] = None
+        last_error = None
 
         for attempt in range(1, max_retries + 1):
             try:
-                params: dict[str, Any] = {}
-                if request.reduce_only:
-                    params["reduceOnly"] = True
-                if request.client_order_id:
-                    params["clientOrderId"] = request.client_order_id
-
-                order_type = request.order_type.value
-                side = request.side.value
+                params = {}
+                if request.reduce_only: params["reduceOnly"] = True
                 
-                # Use the unified CCXT symbol (e.g. ETH/USDT:USDT) directly.
-                # Passing the native ID (ETH_USDT) causes CCXT to call
-                # createSwapOrder internally, which MEXC does not support.
-                # With defaultType="swap" set at connect(), create_order routes
-                # correctly to the futures endpoint using the unified symbol.
-                symbol = request.symbol
+                # Use a specific bot tag for isolation if not provided
+                client_id = request.client_order_id or f"bot_{int(datetime.now().timestamp())}"
+                params["clientOrderId"] = client_id
 
                 raw_order = await self.exchange.create_order(
-                    symbol=symbol,
-                    type=order_type,
-                    side=side,
+                    symbol=request.symbol,
+                    type=request.order_type.value,
+                    side=request.side.value,
                     amount=formatted_amount,
                     price=formatted_price,
                     params=params,
                 )
 
                 result = self._parse_order_result(raw_order, request)
-                self._logger.info(
-                    "order_executed",
-                    order_id=result.order_id,
-                    symbol=request.symbol,
-                    side=side,
-                    amount=formatted_amount,
-                    status=result.status.value,
-                )
+                self._logger.info("order_executed", order_id=result.order_id, amount=formatted_amount)
                 return result
 
-            except ccxt.NetworkError as exc:
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as exc:
                 last_error = exc
-                backoff = 2 ** (attempt - 1)
-                self._logger.warning(
-                    "order_network_retry",
-                    attempt=attempt,
-                    max_retries=max_retries,
-                    backoff=backoff,
-                    error=str(exc),
-                )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(2 ** attempt)
+            except Exception as exc:
+                self._logger.error("order_failed", symbol=request.symbol, error=str(exc))
+                raise ExchangeExecutionError(str(exc), request) from exc
 
-            except ccxt.InvalidOrder as exc:
-                self._logger.error(
-                    "order_invalid",
-                    symbol=request.symbol,
-                    error=str(exc),
-                )
-                raise ExchangeExecutionError(
-                    f"Invalid order for {request.symbol}: {exc}",
-                    order_request=request,
-                ) from exc
+        raise MaxRetriesExceededError(str(last_error), max_retries)
 
-            except ccxt.ExchangeError as exc:
-                self._logger.error(
-                    "order_exchange_error",
-                    symbol=request.symbol,
-                    error=str(exc),
-                )
-                raise ExchangeExecutionError(
-                    f"Exchange error for {request.symbol}: {exc}",
-                    order_request=request,
-                ) from exc
-
-        raise MaxRetriesExceededError(
-            f"Order execution failed after {max_retries} attempts: {last_error}",
-            attempts=max_retries,
-        )
-
-    def _parse_order_result(
-        self, raw_order: dict[str, Any], request: OrderRequest
-    ) -> OrderResult:
-        """Convert raw ccxt order dict into an OrderResult dataclass.
-
-        Args:
-            raw_order: Raw order response from ccxt.
-            request: Original order request for context.
-
-        Returns:
-            Parsed OrderResult.
-        """
+    def _parse_order_result(self, raw_order: dict[str, Any], request: OrderRequest) -> OrderResult:
         timestamp_ms = raw_order.get("timestamp")
+        precision = self._precision_cache.get(raw_order.get("symbol", request.symbol))
+        contract_size = precision.contract_size if precision else 1.0
+
         return OrderResult(
             order_id=str(raw_order.get("id", "")),
             client_order_id=raw_order.get("clientOrderId"),
             symbol=raw_order.get("symbol", request.symbol),
             side=Side(raw_order.get("side", request.side.value)),
             order_type=request.order_type,
-            status=OrderStatus(raw_order.get("status", OrderStatus.PENDING.value)),
-            amount=float(raw_order.get("amount", request.amount)),
-            filled=float(raw_order.get("filled", 0.0)),
-            remaining=float(raw_order.get("remaining", 0.0)),
-            price=float(raw_order["price"]) if raw_order.get("price") else None,
-            average_fill_price=(
-                float(raw_order["average"])
-                if raw_order.get("average")
-                else None
-            ),
-            fee=float(raw_order["fee"]["cost"])
-            if raw_order.get("fee") and raw_order["fee"].get("cost")
-            else None,
-            timestamp=(
-                datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
-                if timestamp_ms
-                else datetime.now(timezone.utc)
-            ),
+            status=OrderStatus(raw_order.get("status", OrderStatus.CLOSED.value)),
+            # Convert back from contracts to base currency
+            amount=float(raw_order.get("amount", 0.0)) * contract_size,
+            filled=float(raw_order.get("filled", 0.0)) * contract_size,
+            remaining=float(raw_order.get("remaining", 0.0)) * contract_size,
+            price=float(raw_order.get("price")) if raw_order.get("price") else None,
+            average_fill_price=float(raw_order.get("average")) if raw_order.get("average") else None,
+            fee=float(raw_order["fee"]["cost"]) if raw_order.get("fee") and raw_order["fee"].get("cost") else 0.0,
+            timestamp=datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc) if timestamp_ms else datetime.now(timezone.utc),
         )
 
     def format_amount(self, symbol: str, amount: float) -> float:
-        """Adjust amount to comply with exchange lot size rules.
-
-        Rounds down to the nearest valid lot size increment.
-        Uses cached AssetPrecision for the symbol.
-
-        Args:
-            symbol: Trading symbol.
-            amount: Desired amount.
-
-        Returns:
-            Adjusted amount that complies with exchange rules.
-
-        Raises:
-            KeyError: If precision for symbol hasn't been loaded yet.
-        """
-        if symbol not in self._precision_cache:
-            raise KeyError(
-                f"Precision for {symbol} not loaded. Call load_precision() first."
-            )
-
         precision = self._precision_cache[symbol]
         lot_size = Decimal(str(precision.lot_size))
-        amount_d = Decimal(str(amount))
-
-        # Round down to the nearest lot size increment
-        adjusted = (amount_d / lot_size).to_integral_value(rounding=ROUND_DOWN) * lot_size
-
+        contract_size = Decimal(str(precision.contract_size))
+        
+        # Convert base (ETH) to contracts
+        contract_units = Decimal(str(amount)) / contract_size
+        
+        # Round to lot size
+        adjusted = (contract_units / lot_size).to_integral_value(rounding=ROUND_DOWN) * lot_size
         return float(adjusted)
 
     def format_price(self, symbol: str, price: float) -> float:
-        """Adjust price to comply with exchange tick size rules.
-
-        Rounds to the nearest valid tick size increment.
-
-        Args:
-            symbol: Trading symbol.
-            price: Desired price.
-
-        Returns:
-            Adjusted price that complies with exchange rules.
-        """
-        if symbol not in self._precision_cache:
-            raise KeyError(
-                f"Precision for {symbol} not loaded. Call load_precision() first."
-            )
-
         precision = self._precision_cache[symbol]
         tick_size = Decimal(str(precision.tick_size))
-        price_d = Decimal(str(price))
-
-        # Round down to the nearest tick size
-        adjusted = (price_d / tick_size).to_integral_value(rounding=ROUND_DOWN) * tick_size
-
+        adjusted = (Decimal(str(price)) / tick_size).to_integral_value() * tick_size
         return float(adjusted)
 
-    # ── Account ────────────────────────────────────────────────────────────
-
     async def fetch_balance(self) -> dict[str, Any]:
-        """Fetch futures account balance.
+        if self.exchange is None: raise RuntimeError("Not connected")
+        return await self.exchange.fetch_balance()
 
-        Returns:
-            Dict with balance info including 'USDT' free/used/total.
-        """
-        if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
+    async def fetch_positions(self, symbol: Optional[str] = None) -> list[dict[str, Any]]:
+        if self.exchange is None: raise RuntimeError("Not connected")
+        positions = await self.exchange.fetch_positions([symbol] if symbol else None)
+        return [p for p in positions if float(p.get("contracts", 0)) != 0]
 
-        balance = await self.exchange.fetch_balance()
-        return balance
-
-    async def fetch_positions(
-        self,
-        symbol: Optional[str] = None,
-    ) -> list[dict[str, Any]]:
-        """Fetch open positions.
-
-        Args:
-            symbol: Optional filter for specific symbol.
-
-        Returns:
-            List of position dicts from exchange.
-        """
-        if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
-
-        symbols = [symbol] if symbol else None
-        positions = await self.exchange.fetch_positions(symbols=symbols)
-
-        # Filter out zero-size positions that exchanges sometimes return
-        active_positions = [
-            p for p in positions
-            if float(p.get("contracts", 0)) != 0
-            or float(p.get("size", 0)) != 0
-            or abs(float(p.get("notional", 0) or 0)) > 0
-        ]
-
-        return active_positions
-
-    async def set_leverage(
-        self,
-        symbol: str,
-        leverage: int,
-        dry_run: bool = False,
-        position_side: str = "long",
-    ) -> None:
-        """Set leverage for a symbol on MEXC Futures.
-
-        Args:
-            symbol: Trading symbol (CCXT unified, e.g. 'BTC/USDT:USDT').
-            leverage: Leverage multiplier (1-125).
-            dry_run: If True, skip the actual API call.
-            position_side: 'long' or 'short' — used to set positionType for MEXC.
-        """
-        if dry_run:
-            self._logger.info(
-                "dry_run_leverage_skipped",
-                symbol=symbol,
-                leverage=leverage,
-            )
-            return
-
-        if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
-
-        # MEXC Futures requires openType and positionType parameters.
-        # openType: 1 = isolated margin, 2 = cross margin
-        # positionType: 1 = long, 2 = short
-        position_type = 1 if position_side == "long" else 2
-        
-        # Use unified symbol — MEXC leverage endpoint via CCXT resolves
-        # correctly with defaultType="swap". Native ID causes routing issues.
+    async def set_leverage(self, symbol: str, leverage: int, dry_run: bool = False, position_side: str = "long") -> None:
+        if dry_run: return
+        if self.exchange is None: raise RuntimeError("Not connected")
+        params = {"openType": 2, "positionType": 1 if position_side == "long" else 2}
         try:
-            params = {
-                "openType": 2,  # Cross margin (matches MEXC account default)
-                "positionType": position_type,
-            }
             await self.exchange.set_leverage(leverage, symbol, params=params)
-        except ccxt.ExchangeError as exc:
-            err_str = str(exc)
-            # MEXC code 2044: leverage already set or position open — safe to ignore
-            if "2044" in err_str or "Insufficient margin" in err_str:
-                self._logger.warning("leverage_skip_existing_position", symbol=symbol, reason="position_already_open")
-            else:
-                raise
-
-        self._logger.info(
-            "leverage_set",
-            symbol=symbol,
-            leverage=leverage,
-            position_side=position_side,
-        )
+        except Exception as e:
+            if "2044" not in str(e): raise
 
     async def cancel_all_orders(self, symbol: str) -> list[dict]:
-        """Cancel all open orders for a symbol.
-
-        Used during graceful shutdown to flatten pending orders.
-
-        Args:
-            symbol: Trading symbol.
-
-        Returns:
-            List of canceled order dicts.
-        """
-        if self.exchange is None:
-            raise RuntimeError("Exchange not connected. Call connect() first.")
-
+        if self.exchange is None: raise RuntimeError("Not connected")
         try:
-            canceled = await self.exchange.cancel_all_orders(symbol)
-            self._logger.info(
-                "orders_canceled",
-                symbol=symbol,
-                count=len(canceled),
-            )
-            return canceled
-        except ccxt.ExchangeError as exc:
-            # Some exchanges return errors when there are no open orders
-            self._logger.debug(
-                "cancel_all_noop",
-                symbol=symbol,
-                error=str(exc),
-            )
+            return await self.exchange.cancel_all_orders(symbol)
+        except Exception:
             return []
 
 
 class ExchangeExecutionError(Exception):
-    """Raised when order execution fails due to exchange-side errors."""
-
     def __init__(self, message: str, order_request: OrderRequest) -> None:
         self.order_request = order_request
         super().__init__(message)
 
 
 class MaxRetriesExceededError(Exception):
-    """Raised when network retries are exhausted."""
-
     def __init__(self, message: str, attempts: int) -> None:
         self.attempts = attempts
         super().__init__(message)

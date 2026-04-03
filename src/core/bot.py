@@ -296,7 +296,17 @@ class TradingBot:
             # APPLY DAILY MULTIPLIER (e.g. 0.5 if in cloud)
             final_amount = size_result.recommended_amount * bias.size_multiplier
             
-            if final_amount <= 0: return
+            # Validate final amount against exchange min_amount before execution
+            precision = await self.exchange.load_precision(symbol)
+            if final_amount < precision.min_amount:
+                self._logger.info(
+                    "position_size_below_min",
+                    symbol=symbol,
+                    final_amount=final_amount,
+                    min_amount=precision.min_amount,
+                    reason="size_too_small_for_exchange"
+                )
+                return
 
             order = OrderRequest(symbol, side, OrderType.MARKET, final_amount, stop_loss=signal.stop_loss, take_profit=signal.take_profit, leverage=leverage)
             result = await self.exchange.safe_order_execution(order, dry_run=self.dry_run)
