@@ -114,6 +114,9 @@ class RiskController:
             )
             recommended_amount = max_amount
 
+        # Note: min_amount validation is now handled in exchange.format_amount
+        # to ensure consistency with exchange-specific rules.
+
         if not math.isfinite(recommended_amount) or recommended_amount <= 0:
             self._logger.warning(
                 "invalid_position_amount",

@@ -379,3 +379,4 @@ class AssetPrecision:
     min_amount: float
     max_amount: float
     min_cost: float
+    contract_size: float = 1.0  # Units per contract (e.g., 0.01 for ETH on MEXC)
