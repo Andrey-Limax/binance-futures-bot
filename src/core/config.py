@@ -24,6 +24,7 @@ from src.models import (
     SentimentConfig,
     StrategyConfig,
     TradingSymbolConfig,
+    VolumeProfileConfig,
 )
 
 logger = structlog.get_logger(__name__)
@@ -94,6 +95,16 @@ class Settings(BaseSettings):
     # ── Circuit Breaker ───────────────────────────────────────────────────
     circuit_breaker_max_consecutive_losses: int = Field(default=3, ge=1)
     circuit_breaker_cooldown_minutes: int = Field(default=30, ge=1)
+
+    # ── Volume Profile ────────────────────────────────────────────────────
+    volume_profile_enabled: bool = Field(default=True)
+    volume_profile_lookback_candles: int = Field(default=200, ge=50)
+    volume_profile_value_area_pct: float = Field(default=0.70, gt=0, le=1)
+    volume_profile_bin_size_pct: float = Field(default=0.001, gt=0, le=0.01)
+    volume_profile_steps_per_candle: int = Field(default=20, ge=5)
+    volume_profile_extremes_only: bool = Field(default=True)
+    volume_profile_timeframes: str = Field(default="5m,15m")
+    volume_profile_max_distance_from_extreme_pct: float = Field(default=0.005, gt=0, le=0.02)
 
     # ── Dry Run ──────────────────────────────────────────────────────────
     dry_run: bool = Field(default=True, description="Simulate orders without executing")
@@ -169,6 +180,16 @@ class ConfigManager:
             circuit_breaker=CircuitBreakerConfig(
                 max_consecutive_losses=s.circuit_breaker_max_consecutive_losses,
                 cooldown_minutes=s.circuit_breaker_cooldown_minutes,
+            ),
+            volume_profile=VolumeProfileConfig(
+                enabled=s.volume_profile_enabled,
+                lookback_candles=s.volume_profile_lookback_candles,
+                value_area_pct=s.volume_profile_value_area_pct,
+                bin_size_pct=s.volume_profile_bin_size_pct,
+                steps_per_candle=s.volume_profile_steps_per_candle,
+                extremes_only=s.volume_profile_extremes_only,
+                timeframes=s.volume_profile_timeframes.split(","),
+                max_distance_from_extreme_pct=s.volume_profile_max_distance_from_extreme_pct,
             ),
             dry_run=s.dry_run,
             environment=s.environment,

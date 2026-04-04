@@ -21,7 +21,11 @@ from src.models import (
     StrategySignal,
     TKCrossDirection,
     TKCrossSignal,
+    VolumeProfileConfig,
+    VolumeProfileResult,
 )
+
+from src.core.volume_profile import VolumeProfileAnalyzer
 
 logger = structlog.get_logger(__name__)
 
@@ -35,11 +39,13 @@ class StrategyEngine:
     _ICHIMOKU_PREFIX = "ICHIMOKU"
     _ATR_PREFIX = "ATR"
 
-    def __init__(self, config: StrategyConfig) -> None:
+    def __init__(self, config: StrategyConfig, vp_config: VolumeProfileConfig) -> None:
         self.config = config
+        self.vp_config = vp_config
         self._logger = logger.bind(component="StrategyEngine")
         self._candle_cache: dict[str, pd.DataFrame] = {}
         self._is_warmed_up: dict[str, bool] = {}
+        self._vp_analyzer = VolumeProfileAnalyzer(vp_config)
 
     async def warm_up(self, symbol: str, candles: list[OHLCV]) -> bool:
         """Populate indicators with historical data."""
@@ -120,28 +126,73 @@ class StrategyEngine:
             
         return TKCrossSignal(TKCrossDirection.NONE, datetime.utcnow())
 
-    def generate_signal(self, symbol: str) -> StrategySignal:
-        """Generate entry signal based on TK cross and daily bias (called by bot)."""
+    async def generate_signal(self, symbol: str) -> StrategySignal:
+        """Generate entry signal based on TK cross and VP extremes filter."""
         now = datetime.utcnow()
         tk_cross = self.detect_tk_cross(symbol)
-        
+
         df = self._candle_cache.get(symbol)
         entry_price = float(df["close"].iloc[-1]) if df is not None else 0.0
-        
+
         if tk_cross.direction == TKCrossDirection.NONE:
             return self._neutral_signal(symbol, now, entry_price)
-            
-        signal = Signal.BUY if tk_cross.direction == TKCrossDirection.BULLISH else Signal.SELL
-        
-        # Calculate SL/TP
-        if df is not None:
-            df_with_ind = self._calculate_atr(self._calculate_ichimoku(df.copy()))
-            stop_loss = self._calculate_stop_loss(df_with_ind, signal)
-            take_profit = self._calculate_take_profit(entry_price, stop_loss)
+
+        # Check volume profile for extremes-only trading
+        if self.vp_config.extremes_only and df is not None:
+            # Get candles for VP calculation
+            candles = [OHLCV(
+                timestamp=pd.to_datetime(row['timestamp']),
+                open=row['open'],
+                high=row['high'],
+                low=row['low'],
+                close=row['close'],
+                volume=row['volume']
+            ) for _, row in df.tail(self.vp_config.lookback_candles).iterrows()]
+
+            vp_result = await self._vp_analyzer.calculate_volume_profile(
+                symbol, self.vp_config.timeframes[0], candles, entry_price
+            )
+
+            # Filter: only trade if near extremes (VAH/VAL/POC)
+            if not self._vp_analyzer.should_trade_extremes_only(vp_result):
+                self._logger.info(
+                    "vp_extremes_filter_blocked",
+                    symbol=symbol,
+                    current_price=entry_price,
+                    near_val=vp_result.near_val,
+                    near_vah=vp_result.near_vah,
+                    near_poc=vp_result.near_poc
+                )
+                return self._neutral_signal(symbol, now, entry_price)
+
+            signal = Signal.BUY if tk_cross.direction == TKCrossDirection.BULLISH else Signal.SELL
+
+            # Use VP-based SL/TP calculation
+            stop_loss, take_profit = self._vp_analyzer.calculate_dynamic_sl_tp(
+                vp_result, entry_price, "long" if signal == Signal.BUY else "short"
+            )
+
+            metadata = {
+                "tk_cross": tk_cross.direction.value,
+                "vp_poc": vp_result.poc,
+                "vp_vah": vp_result.vah,
+                "vp_val": vp_result.val,
+                "vp_near_extreme": True
+            }
         else:
-            stop_loss = 0.0
-            take_profit = 0.0
-            
+            # Fallback to traditional ATR-based SL/TP
+            signal = Signal.BUY if tk_cross.direction == TKCrossDirection.BULLISH else Signal.SELL
+
+            if df is not None:
+                df_with_ind = self._calculate_atr(self._calculate_ichimoku(df.copy()))
+                stop_loss = self._calculate_stop_loss(df_with_ind, signal)
+                take_profit = self._calculate_take_profit(entry_price, stop_loss)
+            else:
+                stop_loss = 0.0
+                take_profit = 0.0
+
+            metadata = {"tk_cross": tk_cross.direction.value}
+
         return StrategySignal(
             symbol=symbol,
             signal=signal,
@@ -150,7 +201,7 @@ class StrategyEngine:
             stop_loss=stop_loss,
             take_profit=take_profit,
             timestamp=now,
-            metadata={"tk_cross": tk_cross.direction.value}
+            metadata=metadata
         )
 
     def _calculate_ichimoku(self, df: pd.DataFrame) -> pd.DataFrame:

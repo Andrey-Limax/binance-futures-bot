@@ -33,6 +33,7 @@ from src.core.position import PositionTracker
 from src.core.circuit_breaker import CircuitBreaker
 from src.core.daily_bias import DailyBiasManager
 from src.strategies.strategy import StrategyEngine
+from src.core.volume_profile import VolumeProfileAnalyzer
 
 logger = structlog.get_logger(__name__)
 
@@ -57,7 +58,7 @@ class TradingBot:
         self.risk = RiskController(config.risk, config.strategy)
         self.tracker = PositionTracker()
         self.circuit_breaker = CircuitBreaker(config.circuit_breaker)
-        self.strategy = StrategyEngine(config.strategy)
+        self.strategy = StrategyEngine(config.strategy, config.volume_profile)
         self.daily_bias_mgr = DailyBiasManager(config.daily_bias, self.exchange)
 
     async def start(self) -> None:
@@ -199,8 +200,8 @@ class TradingBot:
             from src.models import OHLCV
             candle = OHLCV(ticker.timestamp, ticker.last, ticker.last, ticker.last, ticker.last, ticker.volume_24h)
             self.strategy.update_candle(symbol, candle, self.config.timeframe)
-            
-            signal = self.strategy.generate_signal(symbol)
+
+            signal = await self.strategy.generate_signal(symbol)
             if signal.signal != Signal.NEUTRAL:
                 await self._handle_mtf_signal(symbol, signal, ticker, bias)
 
@@ -266,7 +267,12 @@ class TradingBot:
             sentiment = await self.sentiment.get_sentiment()
             if sentiment.blocks_new_entries: return
 
-        self._logger.info("mtf_signal_accepted", symbol=symbol, signal=signal.signal.value, bias=bias.direction.value)
+        # Log VP information if available
+        vp_info = ""
+        if "vp_near_extreme" in signal.metadata:
+            vp_info = f" (VP: near_extreme={signal.metadata.get('vp_near_extreme', False)})"
+
+        self._logger.info("mtf_signal_accepted", symbol=symbol, signal=signal.signal.value, bias=bias.direction.value, vp_info=vp_info)
         await self._open_mtf_position(symbol, signal, ticker, bias)
 
     async def _open_mtf_position(self, symbol: str, signal: StrategySignal, ticker: Ticker, bias: DailyBiasResult) -> None:

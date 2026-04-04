@@ -1,10 +1,10 @@
-# MEXC Futures Bot — Architecture & Data Flow
+# Binance Futures Bot — Architecture & Data Flow
 
 ## System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          MEXC FUTURES TRADING BOT                           │
+│                         BINANCE FUTURES TRADING BOT                          │
 │                      Python 3.11+ / asyncio / ccxt.pro                      │
 └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -32,7 +32,7 @@
                │MACD/RSI │        └─────┬──────┘           └──────┬──────┘
                └────┬────┘              │                         │
                     │              ┌────▼────┐                    │
-                    │              │ MEXC API│                    │
+                    │              │ BINANCE API│                    │
                     │              │WebSocket│                    │
                     │              └────┬────┘                    │
                     │                   │                         │
@@ -150,7 +150,7 @@
           ▼
    ┌──────────────────┐
    │ Cancel open      │
-   │ orders on MEXC   │
+   │ orders on BINANCE│
    └──────┬───────────┘
           │
           ▼

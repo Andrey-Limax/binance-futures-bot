@@ -1,6 +1,6 @@
-# MEXC Futures Trading Bot
+# Binance Futures Trading Bot
 
-Async-native trading bot for MEXC USDT-M Futures (BTC/ETH) with Ichimoku + MACD/RSI strategy.
+Async-native trading bot for Binance USDT-M Futures (BTC/ETH) with Ichimoku + Volume Profile strategy.
 
 ## Features
 
@@ -21,7 +21,7 @@ cd mexc-futures-bot
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your MEXC API credentials
+# Edit .env with your Binance API credentials
 
 # Docker (recommended)
 docker-compose up -d
@@ -60,8 +60,8 @@ All configuration is via environment variables. See `.env.example` for full list
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEXC_API_KEY` | *required* | MEXC API key |
-| `MEXC_API_SECRET` | *required* | MEXC API secret |
+| `BINANCE_API_KEY` | *required* | Binance API key |
+| `BINANCE_API_SECRET` | *required* | Binance API secret |
 | `TRADING_SYMBOLS` | `BTC/USDT:USDT,ETH/USDT:USDT` | Symbols to trade |
 | `DEFAULT_LEVERAGE` | `6` | Default leverage |
 | `MAX_LEVERAGE` | `12` | Maximum leverage |
@@ -70,7 +70,7 @@ All configuration is via environment variables. See `.env.example` for full list
 ## Safety
 
 - **NEVER** hardcode API keys — always use `.env`
-- Trailing stops are manual (MEXC doesn't support native trailing stop via API)
+- Trailing stops are manual (Binance supports trailing stop via API, but we use manual for precise control)
 - Circuit breaker halts trading after daily loss threshold
 - Sentiment blocks entries during extreme fear/greed
 

@@ -136,6 +136,42 @@ class DailyBiasConfig(BaseModel):
     enabled: bool = Field(default=True)
 
 
+class VolumeProfileConfig(BaseModel):
+    """Volume Profile analysis parameters."""
+    enabled: bool = Field(default=True)
+    lookback_candles: int = Field(default=200, ge=50)
+    value_area_pct: float = Field(default=0.70, gt=0, le=1)
+    bin_size_pct: float = Field(default=0.001, gt=0, le=0.01)
+    steps_per_candle: int = Field(default=20, ge=5)
+    extremes_only: bool = Field(default=True)
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    max_distance_from_extreme_pct: float = Field(default=0.005, gt=0, le=0.02)
+
+
+@dataclass(frozen=True)
+class VolumeProfileResult:
+    """Result of volume profile analysis for a symbol."""
+    symbol: str
+    timeframe: str
+    poc: float
+    vah: float
+    val: float
+    total_volume: float
+    bins: int
+    current_price: float
+    in_value_area: bool
+    near_val: bool
+    near_vah: bool
+    near_poc: bool
+    distance_to_val_pct: float
+    distance_to_vah_pct: float
+    distance_to_poc_pct: float
+    val_to_poc_pct: float
+    poc_to_vah_pct: float
+    val_to_vah_pct: float
+    calculated_at: datetime
+
+
 class AppConfig(BaseModel):
     """Root application configuration aggregating all sub-configs."""
     # Binance credentials
@@ -153,6 +189,7 @@ class AppConfig(BaseModel):
     sentiment: SentimentConfig = Field(default_factory=SentimentConfig)
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
     daily_bias: DailyBiasConfig = Field(default_factory=DailyBiasConfig)
+    volume_profile: VolumeProfileConfig = Field(default_factory=VolumeProfileConfig)
 
     # Leverage
     default_leverage: int = Field(default=6, ge=1, le=20)
@@ -386,3 +423,6 @@ class AssetPrecision:
     max_amount: float
     min_cost: float
     contract_size: float = 1.0  # Units per contract (Binance: 1.0 for linear contracts)
+
+
+
