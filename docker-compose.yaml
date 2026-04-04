@@ -1,5 +1,5 @@
 # ============================================
-# MEXC Futures Trading Bot — Docker Compose
+# Binance Futures Trading Bot — Docker Compose
 # ============================================
 
 version: "3.8"
@@ -10,7 +10,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    container_name: mexc-trading-bot
+    container_name: binance-trading-bot
     restart: always
     env_file:
       - .env

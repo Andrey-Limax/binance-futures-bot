@@ -1,4 +1,4 @@
-"""Data models for the MEXC Futures Trading Bot.
+"""Data models for the Binance Futures Trading Bot.
 
 Defines all Pydantic models, dataclasses, and enums used across the system.
 All models enforce strict typing for mission-critical trading operations.
@@ -26,6 +26,9 @@ class OrderType(str, enum.Enum):
     """Order type."""
     MARKET = "market"
     LIMIT = "limit"
+    STOP_MARKET = "stop_market"
+    STOP_LOSS_LIMIT = "stop_loss_limit"
+    TAKE_PROFIT_MARKET = "take_profit_market"
 
 
 class PositionSide(str, enum.Enum):
@@ -135,9 +138,9 @@ class DailyBiasConfig(BaseModel):
 
 class AppConfig(BaseModel):
     """Root application configuration aggregating all sub-configs."""
-    # MEXC credentials
-    mexc_api_key: str = Field(..., min_length=1)
-    mexc_api_secret: str = Field(..., min_length=1)
+    # Binance credentials
+    binance_api_key: str = Field(..., min_length=1)
+    binance_api_secret: str = Field(..., min_length=1)
 
     # Trading
     trading_symbols: list[TradingSymbolConfig] = Field(default_factory=list)
@@ -158,6 +161,9 @@ class AppConfig(BaseModel):
 
     # Dry Run
     dry_run: bool = Field(default=True)
+
+    # Margin Mode
+    margin_mode: str = Field(default="ISOLATED")
 
     # App
     environment: str = Field(default="production")
@@ -379,4 +385,4 @@ class AssetPrecision:
     min_amount: float
     max_amount: float
     min_cost: float
-    contract_size: float = 1.0  # Units per contract (e.g., 0.01 for ETH on MEXC)
+    contract_size: float = 1.0  # Units per contract (Binance: 1.0 for linear contracts)

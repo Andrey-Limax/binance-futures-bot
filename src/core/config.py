@@ -43,9 +43,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── MEXC Credentials ──────────────────────────────────────────────────
-    mexc_api_key: str = Field(..., description="MEXC API key")
-    mexc_api_secret: str = Field(..., description="MEXC API secret")
+    # ── Binance Credentials ────────────────────────────────────────────────
+    binance_api_key: str = Field(..., description="Binance API key")
+    binance_api_secret: str = Field(..., description="Binance API secret")
 
     # ── Trading Symbols ───────────────────────────────────────────────────
     trading_symbols: str = Field(
@@ -127,8 +127,8 @@ class ConfigManager:
     def to_app_config(self) -> AppConfig:
         s = self._settings
         return AppConfig(
-            mexc_api_key=s.mexc_api_key,
-            mexc_api_secret=s.mexc_api_secret,
+            binance_api_key=s.binance_api_key,
+            binance_api_secret=s.binance_api_secret,
             trading_symbols=self._parse_trading_symbols(),
             timeframe=s.timeframe,
             default_leverage=s.default_leverage,
@@ -183,7 +183,7 @@ class ConfigManager:
             entry = entry.strip()
             if entry:
                 # Auto-normalize to CCXT swap format (e.g. BTC/USDT -> BTC/USDT:USDT)
-                # This is REQUIRED for MEXC futures — without ':USDT' CCXT resolves to spot market
+                # This is REQUIRED for futures — without ':USDT' CCXT resolves to spot market
                 if "/" in entry and ":" not in entry:
                     entry = f"{entry}:USDT"
                 symbols.append(
@@ -205,8 +205,8 @@ class ConfigManager:
     def get_masked_config(self) -> dict:
         s = self._settings
         return {
-            "mexc_api_key": "***MASKED***",
-            "mexc_api_secret": "***MASKED***",
+            "binance_api_key": "***MASKED***",
+            "binance_api_secret": "***MASKED***",
             "trading_symbols": s.trading_symbols,
             "timeframe": s.timeframe,
             "daily_bias_enabled": s.daily_bias_enabled,

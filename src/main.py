@@ -1,4 +1,4 @@
-"""MEXC Futures Trading Bot — Entry Point.
+"""Binance Futures Trading Bot — Entry Point.
 
 Initializes structured logging, loads configuration, and starts
 the main trading loop. Handles top-level exceptions and ensures

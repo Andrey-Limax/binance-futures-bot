@@ -1,4 +1,4 @@
-"""Exchange interface wrapper for MEXC Futures via ccxt.pro.
+"""Exchange interface wrapper for Binance Futures via ccxt.pro.
 
 Manages WebSocket connections for real-time market data,
 order execution with retry logic, and asset precision handling.
@@ -30,10 +30,10 @@ logger = structlog.get_logger(__name__)
 
 
 class ExchangeInterface:
-    """Async wrapper around ccxt.pro for MEXC Futures.
+    """Async wrapper around ccxt.pro for Binance Futures USDT-M.
 
     Responsibilities:
-        - Manage authenticated connection to MEXC Futures
+        - Manage authenticated connection to Binance Futures
         - Subscribe to WebSocket ticker streams
         - Execute orders with retry logic for transient failures
         - Format amounts/prices according to exchange precision rules
@@ -48,12 +48,12 @@ class ExchangeInterface:
         self._logger = logger.bind(component="ExchangeInterface")
         self._precision_cache: dict[str, AssetPrecision] = {}
         self._ws_running: bool = False
-        self.exchange: Optional[ccxt.mexc] = None
+        self.exchange: Optional[ccxt.binance] = None
         self._api_key = api_key
         self._api_secret = api_secret
 
     async def connect(self) -> None:
-        """Establish connection to MEXC Futures and load markets."""
+        """Establish connection to Binance Futures and load markets."""
         if self.exchange is not None:
             try:
                 await self.exchange.close()
@@ -62,19 +62,23 @@ class ExchangeInterface:
             self.exchange = None
 
         try:
-            self.exchange = ccxt.mexc(
+            self.exchange = ccxt.binance(
                 {
                     "apiKey": self._api_key,
                     "secret": self._api_secret,
                     "options": {
-                        "defaultType": "swap",
+                        "defaultType": "future",
+                        "marginMode": "isolated",
                     },
+                    "enableRateLimit": True,
                 }
             )
-            
-            # CCXT has a hardcoded block for major pairs (BTC/ETH/LTC) on MEXC.
-            # We clear it explicitly to allow trading these pairs.
-            self.exchange.options["unavailableContracts"] = {}
+
+            # Set margin mode ISOLATED before any operation
+            try:
+                await self.exchange.set_margin_mode("isolated")
+            except Exception as e:
+                self._logger.warning("set_margin_mode_failed", error=str(e))
 
             # Load markets with retry for stability
             max_retries = 5
@@ -91,7 +95,7 @@ class ExchangeInterface:
                     if attempt == max_retries:
                         raise
                     self._logger.warning("exchange_load_markets_retry", attempt=attempt, error=str(exc))
-                    await asyncio.sleep(2**attempt)
+                    await asyncio.sleep(2 ** attempt)
         except Exception as exc:
             self._logger.error("exchange_connection_failed", error=str(exc))
             if self.exchange is not None:
@@ -132,7 +136,6 @@ class ExchangeInterface:
         price_prec = precision_info.get("price", 8)
         amount_prec = precision_info.get("amount", 8)
 
-        # Convert decimal-places integers to step-size floats
         if isinstance(price_prec, int):
             tick_size = float(Decimal("1").scaleb(-price_prec))
         else:
@@ -185,8 +188,8 @@ class ExchangeInterface:
 
     async def watch_ticker(self, symbol: str) -> AsyncGenerator[Ticker, None]:
         if self.exchange is None:
-            raise RuntimeError("Exchange not connected.")
-        
+            raise RuntimeError("Not connected.")
+
         while self._ws_running:
             try:
                 raw_ticker = await self.exchange.watch_ticker(symbol)
@@ -196,8 +199,9 @@ class ExchangeInterface:
                     ask=self.safe_float(raw_ticker.get("ask")),
                     last=self.safe_float(raw_ticker.get("last")),
                     volume_24h=self.safe_float(raw_ticker.get("baseVolume")),
-                    timestamp=datetime.fromtimestamp(raw_ticker["timestamp"] / 1000, tz=timezone.utc)
-                    if raw_ticker.get("timestamp") else datetime.now(timezone.utc),
+                    timestamp=datetime.fromtimestamp(
+                        raw_ticker["timestamp"] / 1000, tz=timezone.utc
+                    ) if raw_ticker.get("timestamp") else datetime.now(timezone.utc),
                 )
             except asyncio.CancelledError:
                 raise
@@ -211,7 +215,13 @@ class ExchangeInterface:
         dry_run: bool = False,
     ) -> OrderResult:
         if dry_run:
-            self._logger.info("dry_run_order", symbol=request.symbol, side=request.side.value, amount=request.amount)
+            self._logger.info(
+                "dry_run_order",
+                symbol=request.symbol,
+                side=request.side.value,
+                amount=request.amount,
+                price=request.price,
+            )
             return OrderResult(
                 order_id=f"DRY_RUN_{datetime.now(timezone.utc).timestamp()}",
                 client_order_id=request.client_order_id,
@@ -240,9 +250,9 @@ class ExchangeInterface:
         for attempt in range(1, max_retries + 1):
             try:
                 params = {}
-                if request.reduce_only: params["reduceOnly"] = True
-                
-                # Use a specific bot tag for isolation if not provided
+                if request.reduce_only:
+                    params["reduceOnly"] = True
+
                 client_id = request.client_order_id or f"bot_{int(datetime.now().timestamp())}"
                 params["clientOrderId"] = client_id
 
@@ -256,12 +266,32 @@ class ExchangeInterface:
                 )
 
                 result = self._parse_order_result(raw_order, request)
-                self._logger.info("order_executed", order_id=result.order_id, amount=formatted_amount)
+                self._logger.info(
+                    "order_executed",
+                    order_id=result.order_id,
+                    amount=formatted_amount,
+                    price=formatted_price,
+                )
                 return result
 
             except (ccxt.NetworkError, ccxt.RequestTimeout) as exc:
                 last_error = exc
-                await asyncio.sleep(2 ** attempt)
+                retry_after = 2 ** attempt
+                self._logger.warning(
+                    "order_retry",
+                    attempt=attempt,
+                    error=str(exc),
+                    wait=retry_after,
+                )
+                await asyncio.sleep(retry_after)
+            except ccxt.RateLimitExceeded as exc:
+                wait_sec = int(exc.args[0]) if exc.args else 60
+                self._logger.warning(
+                    "rate_limited",
+                    symbol=request.symbol,
+                    retry_after=wait_sec,
+                )
+                await asyncio.sleep(wait_sec)
             except Exception as exc:
                 self._logger.error("order_failed", symbol=request.symbol, error=str(exc))
                 raise ExchangeExecutionError(str(exc), request) from exc
@@ -270,8 +300,6 @@ class ExchangeInterface:
 
     def _parse_order_result(self, raw_order: dict[str, Any], request: OrderRequest) -> OrderResult:
         timestamp_ms = raw_order.get("timestamp")
-        precision = self._precision_cache.get(raw_order.get("symbol", request.symbol))
-        contract_size = precision.contract_size if precision else 1.0
 
         return OrderResult(
             order_id=str(raw_order.get("id", "")),
@@ -280,26 +308,30 @@ class ExchangeInterface:
             side=Side(raw_order.get("side", request.side.value)),
             order_type=request.order_type,
             status=OrderStatus(raw_order.get("status", OrderStatus.CLOSED.value)),
-            # Convert back from contracts to base currency
-            amount=float(raw_order.get("amount", 0.0)) * contract_size,
-            filled=float(raw_order.get("filled", 0.0)) * contract_size,
-            remaining=float(raw_order.get("remaining", 0.0)) * contract_size,
+            # Binance returns amount in base currency (not contracts like MEXC)
+            amount=float(raw_order.get("amount", 0.0)),
+            filled=float(raw_order.get("filled", 0.0)),
+            remaining=float(raw_order.get("remaining", 0.0)),
             price=float(raw_order.get("price")) if raw_order.get("price") else None,
-            average_fill_price=float(raw_order.get("average")) if raw_order.get("average") else None,
-            fee=float(raw_order["fee"]["cost"]) if raw_order.get("fee") and raw_order["fee"].get("cost") else 0.0,
-            timestamp=datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc) if timestamp_ms else datetime.now(timezone.utc),
+            average_fill_price=(
+                float(raw_order.get("average")) if raw_order.get("average") else None
+            ),
+            fee=(
+                float(raw_order["fee"]["cost"])
+                if raw_order.get("fee") and raw_order["fee"].get("cost")
+                else 0.0
+            ),
+            timestamp=datetime.fromtimestamp(
+                timestamp_ms / 1000, tz=timezone.utc
+            ) if timestamp_ms else datetime.now(timezone.utc),
         )
 
     def format_amount(self, symbol: str, amount: float) -> float:
         precision = self._precision_cache[symbol]
         lot_size = Decimal(str(precision.lot_size))
-        contract_size = Decimal(str(precision.contract_size))
-        
-        # Convert base (ETH) to contracts
-        contract_units = Decimal(str(amount)) / contract_size
-        
-        # Round to lot size
-        adjusted = (contract_units / lot_size).to_integral_value(rounding=ROUND_DOWN) * lot_size
+
+        # Binance Futures: amount is in base currency, round to lot size precision
+        adjusted = (Decimal(str(amount)) / lot_size).to_integral_value(rounding=ROUND_DOWN) * lot_size
         return float(adjusted)
 
     def format_price(self, symbol: str, price: float) -> float:
@@ -309,25 +341,82 @@ class ExchangeInterface:
         return float(adjusted)
 
     async def fetch_balance(self) -> dict[str, Any]:
-        if self.exchange is None: raise RuntimeError("Not connected")
+        if self.exchange is None:
+            raise RuntimeError("Not connected")
         return await self.exchange.fetch_balance()
 
     async def fetch_positions(self, symbol: Optional[str] = None) -> list[dict[str, Any]]:
-        if self.exchange is None: raise RuntimeError("Not connected")
+        if self.exchange is None:
+            raise RuntimeError("Not connected")
         positions = await self.exchange.fetch_positions([symbol] if symbol else None)
         return [p for p in positions if float(p.get("contracts", 0)) != 0]
 
-    async def set_leverage(self, symbol: str, leverage: int, dry_run: bool = False, position_side: str = "long") -> None:
-        if dry_run: return
-        if self.exchange is None: raise RuntimeError("Not connected")
-        params = {"openType": 2, "positionType": 1 if position_side == "long" else 2}
+    async def set_leverage(
+        self,
+        symbol: str,
+        leverage: int,
+        dry_run: bool = False,
+        position_side: str = "long",
+    ) -> None:
+        if dry_run:
+            return
+        if self.exchange is None:
+            raise RuntimeError("Not connected")
+        # Binance uses marginType param instead of openType/positionType (MEXC-style)
+        params = {"marginType": "ISOLATED"}
         try:
             await self.exchange.set_leverage(leverage, symbol, params=params)
         except Exception as e:
-            if "2044" not in str(e): raise
+            # Error 2044 = leverage already set at this level, ignore
+            if "2044" not in str(e):
+                raise
+
+    async def create_oco_order(
+        self,
+        symbol: str,
+        side: Side,
+        amount: float,
+        price: float,
+        stop_price: float,
+        stop_limit_price: Optional[float] = None,
+        client_order_id: Optional[str] = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Create OCO (One-Cancels-Other) order: entry + take-profit + stop-loss."""
+        if dry_run:
+            return {
+                "id": f"DRY_RUN_OCO_{datetime.now(timezone.utc).timestamp()}",
+                "clientOrderId": client_order_id,
+                "status": "closed",
+            }
+
+        if self.exchange is None:
+            raise RuntimeError("Not connected.")
+
+        formatted_amount = self.format_amount(symbol, amount)
+        formatted_price = self.format_price(symbol, price)
+        formatted_stop = self.format_price(symbol, stop_price)
+
+        params = {}
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        side_str = "BUY" if side == Side.BUY else "SELL"
+
+        result = await self.exchange.create_oco_order(
+            symbol=symbol,
+            side=side_str,
+            amount=formatted_amount,
+            price=formatted_price,
+            stopPrice=formatted_stop,
+            stopLimitPrice=self.format_price(symbol, stop_limit_price) if stop_limit_price else None,
+            params=params,
+        )
+        return result
 
     async def cancel_all_orders(self, symbol: str) -> list[dict]:
-        if self.exchange is None: raise RuntimeError("Not connected")
+        if self.exchange is None:
+            raise RuntimeError("Not connected.")
         try:
             return await self.exchange.cancel_all_orders(symbol)
         except Exception:

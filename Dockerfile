@@ -1,5 +1,5 @@
 # ============================================
-# MEXC Futures Trading Bot — Multi-stage Dockerfile
+# Binance Futures Trading Bot — Multi-stage Dockerfile
 # ============================================
 
 # ── Stage 1: Builder ──────────────────────────────────────────────────────

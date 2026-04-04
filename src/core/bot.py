@@ -38,7 +38,7 @@ logger = structlog.get_logger(__name__)
 
 
 class TradingBot:
-    """Main trading bot orchestrator for MTF Ichimoku."""
+    """Main trading bot orchestrator for MTF Ichimoku (Binance Futures)."""
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
@@ -52,7 +52,7 @@ class TradingBot:
         if self.dry_run:
             self._logger.warning("DRY_RUN mode enabled")
 
-        self.exchange = ExchangeInterface(api_key=config.mexc_api_key, api_secret=config.mexc_api_secret)
+        self.exchange = ExchangeInterface(api_key=config.binance_api_key, api_secret=config.binance_api_secret)
         self.sentiment = SentimentAnalyzer(config.sentiment)
         self.risk = RiskController(config.risk, config.strategy)
         self.tracker = PositionTracker()
@@ -205,7 +205,7 @@ class TradingBot:
                 await self._handle_mtf_signal(symbol, signal, ticker, bias)
 
     async def _sync_positions_with_exchange(self) -> None:
-        """Startup sync: Ensure local PositionTracker matches MEXC active positions."""
+        """Startup sync: Ensure local PositionTracker matches Binance active positions."""
         self._logger.info("startup_position_sync_started")
         try:
             exchange_positions = await self.exchange.fetch_positions()
@@ -283,20 +283,19 @@ class TradingBot:
             side = Side.BUY if signal.signal in (Signal.BUY, Signal.STRONG_BUY) else Side.SELL
             position_side = "long" if side == Side.BUY else "short"
             
-            # Leverage & Sets
-            leverage = self.config.default_leverage # Simplified for MTF
+            # Leverage & Margin Mode
+            leverage = self.config.default_leverage
             await self.exchange.set_leverage(symbol, leverage, dry_run=self.dry_run, position_side=position_side)
 
-            # Position Sizing with MTF multiplier
+            # Position Sizing
             balance = await self.exchange.fetch_balance()
             usdt = float(balance.get("USDT", {}).get("free", 0.0))
             
             size_result = self.risk.calculate_position_size(symbol, signal.entry_price, signal.stop_loss, usdt, leverage)
             
-            # APPLY DAILY MULTIPLIER (e.g. 0.5 if in cloud)
             final_amount = size_result.recommended_amount * bias.size_multiplier
             
-            # Validate final amount against exchange min_amount before execution
+            # Validate final amount against exchange min_notional before execution
             precision = await self.exchange.load_precision(symbol)
             if final_amount < precision.min_amount:
                 self._logger.info(
@@ -308,8 +307,39 @@ class TradingBot:
                 )
                 return
 
-            order = OrderRequest(symbol, side, OrderType.MARKET, final_amount, stop_loss=signal.stop_loss, take_profit=signal.take_profit, leverage=leverage)
-            result = await self.exchange.safe_order_execution(order, dry_run=self.dry_run)
+            # --- LIMIT ENTRY (maker order, ~0.02% fee) ---
+            # Offset 0.05% from mid-price to ensure we're maker
+            offset_pct = 0.0005
+            if side == Side.BUY:
+                limit_price = round(signal.entry_price * (1 - offset_pct), precision.price_precision)
+            else:
+                limit_price = round(signal.entry_price * (1 + offset_pct), precision.price_precision)
+
+            entry_order = OrderRequest(
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.LIMIT,
+                amount=final_amount,
+                price=limit_price,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                leverage=leverage,
+            )
+            result = await self.exchange.safe_order_execution(entry_order, dry_run=self.dry_run)
+
+            # After successful LIMIT fill, post OCO TP+SL on Binance
+            if result.filled and not self.dry_run and result.order_id:
+                try:
+                    oco_result = await self.exchange.create_oco_order(
+                        symbol=symbol,
+                        side=side,
+                        amount=final_amount,
+                        price=round(signal.take_profit, precision.price_precision),
+                        stop_price=round(signal.stop_loss, precision.price_precision),
+                    )
+                    self._logger.info("oco_posted", symbol=symbol, oco_id=oco_result.order_id)
+                except Exception as oco_err:
+                    self._logger.warning("oco_failed_will_manage_locally", symbol=symbol, error=str(oco_err))
 
             # Tracking
             ts = self.risk.calculate_trailing_stop(signal.entry_price, ticker.last, position_side)
@@ -318,7 +348,7 @@ class TradingBot:
             self.tracker.save_position(pos)
             self._last_entry_time[symbol] = datetime.utcnow()
             
-            self._logger.info("position_opened_mtf", symbol=symbol, amount=final_amount, multiplier=bias.size_multiplier)
+            self._logger.info("position_opened_mtf", symbol=symbol, amount=final_amount, multiplier=bias.size_multiplier, limit_price=limit_price)
 
         except Exception:
             self._logger.exception("mtf_open_failed", symbol=symbol)
