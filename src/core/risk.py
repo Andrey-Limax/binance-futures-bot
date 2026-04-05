@@ -56,6 +56,7 @@ class RiskController:
         stop_loss_price: float,
         account_balance: float,
         leverage: int = 1,
+        min_amount: float = 0.0,
     ) -> PositionSizeResult:
         """Calculate optimal position size based on risk parameters.
 
@@ -67,6 +68,7 @@ class RiskController:
 
         Enforces:
             - Position value <= max_position_pct of account balance
+            - Position amount >= min_amount (minimum exchange requirement)
             - Position amount is positive and finite
 
         Args:
@@ -75,6 +77,7 @@ class RiskController:
             stop_loss_price: Stop loss price.
             account_balance: Available USDT balance.
             leverage: Current leverage setting.
+            min_amount: Minimum amount required by exchange (default 0.0).
 
         Returns:
             PositionSizeResult with recommended and max amounts.
@@ -114,8 +117,15 @@ class RiskController:
             )
             recommended_amount = max_amount
 
-        # Note: min_amount validation is now handled in exchange.format_amount
-        # to ensure consistency with exchange-specific rules.
+        # Ensure minimum amount requirement is met
+        if min_amount > 0 and recommended_amount < min_amount:
+            self._logger.info(
+                "position_size_adjusted_to_minimum",
+                symbol=symbol,
+                original_amount=recommended_amount,
+                minimum_amount=min_amount,
+            )
+            recommended_amount = min_amount
 
         if not math.isfinite(recommended_amount) or recommended_amount <= 0:
             self._logger.warning(
@@ -139,6 +149,7 @@ class RiskController:
             max_amount=max_amount,
             risk_amount=risk_amount,
             stop_distance_pct=stop_distance_pct,
+            min_amount=min_amount,
         )
 
         return PositionSizeResult(

@@ -17,6 +17,7 @@ import structlog
 from src.models import (
     AppConfig,
     DailyBiasDirection,
+    DailyBiasResult,
     OrderRequest,
     OrderType,
     Side,
@@ -297,21 +298,35 @@ class TradingBot:
             balance = await self.exchange.fetch_balance()
             usdt = float(balance.get("USDT", {}).get("free", 0.0))
             
-            size_result = self.risk.calculate_position_size(symbol, signal.entry_price, signal.stop_loss, usdt, leverage)
+            # Get exchange minimum amount requirement
+            precision = await self.exchange.load_precision(symbol)
+            min_amount = precision.min_amount
             
+            # Calculate position size with minimum requirement
+            size_result = self.risk.calculate_position_size(
+                symbol, 
+                signal.entry_price, 
+                signal.stop_loss, 
+                usdt, 
+                leverage,
+                min_amount=min_amount
+            )
+            
+            # Apply bias multiplier (can be < 1.0 for cloud filtering)
             final_amount = size_result.recommended_amount * bias.size_multiplier
             
-            # Validate final amount against exchange min_notional before execution
-            precision = await self.exchange.load_precision(symbol)
-            if final_amount < precision.min_amount:
+            # Ensure final amount meets minimum requirement
+            if final_amount < min_amount:
                 self._logger.info(
-                    "position_size_below_min",
+                    "position_size_adjusted_to_minimum_after_bias",
                     symbol=symbol,
-                    final_amount=final_amount,
-                    min_amount=precision.min_amount,
-                    reason="size_too_small_for_exchange"
+                    original_final_amount=final_amount,
+                    minimum_amount=min_amount,
+                    bias_multiplier=bias.size_multiplier,
+                    recommended_amount=size_result.recommended_amount,
+                    reason="bias_multiplier_reduced_size"
                 )
-                return
+                final_amount = min_amount
 
             # --- LIMIT ENTRY (maker order, ~0.02% fee) ---
             # Offset 0.05% from mid-price to ensure we're maker
