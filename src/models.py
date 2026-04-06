@@ -95,7 +95,7 @@ class RiskConfig(BaseModel):
     max_position_pct: float = Field(default=10.0, gt=0, le=100)
     stop_loss_pct: float = Field(default=2.0, gt=0, le=100)
     trailing_stop_pct: float = Field(default=1.5, gt=0, le=100)
-    risk_per_trade_pct: float = Field(default=1.0, gt=0, le=100)
+    risk_per_trade_pct: float = Field(default=5.5, gt=0, le=100)
 
 
 class StrategyConfig(BaseModel):
