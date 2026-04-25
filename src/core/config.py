@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     rsi_period: int = Field(default=14, ge=1)
     rsi_oversold: float = Field(default=30.0, ge=0, le=100)
     rsi_overbought: float = Field(default=70.0, ge=0, le=100)
+    momentum_min_score: int = Field(default=2, ge=1, le=3)
+    rsi_period_5m: int = Field(default=7, ge=1)
     atr_period: int = Field(default=14, ge=1)
     warmup_candles: int = Field(default=100, ge=50)
 
@@ -168,6 +170,8 @@ class ConfigManager:
                 rsi_period=s.rsi_period,
                 rsi_oversold=s.rsi_oversold,
                 rsi_overbought=s.rsi_overbought,
+                momentum_min_score=s.momentum_min_score,
+                rsi_period_5m=s.rsi_period_5m,
                 atr_period=s.atr_period,
                 warmup_candles=s.warmup_candles,
             ),
