@@ -147,7 +147,6 @@ class TradingBot:
     async def _monitor_symbol(self, symbol: str) -> None:
         self._logger.info("monitor_started", symbol=symbol)
         last_bias_update = datetime.utcnow() - timedelta(hours=1) # Force immediate update
-        last_heartbeat = datetime.utcnow()
         ticks_received = 0
 
         async for ticker in self.exchange.watch_ticker(symbol):
@@ -155,10 +154,8 @@ class TradingBot:
             ticks_received += 1
             now = datetime.utcnow()
 
-            # Heartbeat (Every 100 ticks or 1 minute)
-            if ticks_received % 100 == 0 or (now - last_heartbeat).total_seconds() > 60:
+            if ticks_received % 300 == 0:
                 self._logger.info("monitor_heartbeat", symbol=symbol, ticks=ticks_received)
-                last_heartbeat = now
 
             # 1. Hourly Daily Bias Update
             now = datetime.utcnow()

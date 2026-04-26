@@ -192,13 +192,18 @@ class StrategyEngine:
 
     def _evaluate_bias(self, symbol: str) -> tuple[str, dict[str, Any]]:
         df = self._candle_cache_1h.get(symbol)
-        if df is None or len(df) < 30:
+        if df is None or len(df) < 205:
             return "neutral", {"bias_reason": "insufficient_1h"}
 
         work = df.copy()
-        work["ema50"] = work.ta.ema(length=50)
-        work["ema200"] = work.ta.ema(length=200)
-        work["rsi14"] = work.ta.rsi(length=14)
+        ema50_result = work.ta.ema(length=50)
+        work["ema50"] = ema50_result.iloc[:, 0] if isinstance(ema50_result, pd.DataFrame) else ema50_result
+
+        ema200_result = work.ta.ema(length=200)
+        work["ema200"] = ema200_result.iloc[:, 0] if isinstance(ema200_result, pd.DataFrame) else ema200_result
+
+        rsi14_result = work.ta.rsi(length=14)
+        work["rsi14"] = rsi14_result.iloc[:, 0] if isinstance(rsi14_result, pd.DataFrame) else rsi14_result
         work["vwap_day"] = self._daily_vwap(work)
 
         last = work.iloc[-1]
