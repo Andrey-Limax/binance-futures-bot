@@ -69,11 +69,8 @@ All configuration is via environment variables. See `.env.example` for full list
 
 ## Safety
 
-- **NEVER** hardcode API keys — always use `.env`
+- **NEVER** hardcode API keys
 - Trailing stops are manual (MEXC doesn't support native trailing stop via API)
 - Circuit breaker halts trading after daily loss threshold
 - Sentiment blocks entries during extreme fear/greed
 
-## License
-
-MIT
